@@ -1,0 +1,9 @@
+# M1DURPLAS project settings
+# The endpoint in an uri form. The scheme define the connection type# http:// for update 8.0 and greater, x3:// or none for previous versions
+uri=http://192.168.1.212:8124/M1DURPLAS/M1DURPLAS
+# ===================================================
+# Obsolete settings (kept for backward compatibility)
+# ===================================================
+server=192.168.1.212
+port=8124
+folder=M1DURPLAS

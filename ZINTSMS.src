@@ -1,0 +1,265 @@
+#<AdxTL>@(#)0.0.0.0 $Revision$
+#######################################################################################
+# Fuente.....: ZINTSMS  -  Integración de mensajes interfaz X3
+#######################################################################################
+
+#######################################################################################
+#      A C C I O N E S
+#######################################################################################
+$ACTION
+Case ACTION
+  When "INIT"          Gosub INIT
+  When "INIT_DIA"      Gosub INIT
+  When "OUVRE_BATCH"   Gosub OUVRE
+  When "CONTROLE"      Gosub CONTROLE
+  When "EXEC"          Gosub EXEC
+  When "SORTIE"        Gosub SORTIE
+Endcase
+Return
+
+#######################################################################################
+$INIT
+Local Mask   ZINTSMS [M:ZDIA]
+Default Mask [M:ZDIA]
+Local Char   ZSYMBOLE(100)
+
+#If GFONCTION1="ZINTMON" Then
+  [M:ZDIA]ZAPLICACION="MESIX"
+  [M:ZDIA]ZSENTIDO=2
+  Affzo [M:ZDIA]ZAPLICACION
+  Affzo [M:ZDIA]ZSENTIDO
+  Call AM_ZSENTIDO([M:ZDIA]ZSENTIDO)
+  For ZN=0 To [M:ZDIA]NBLIG-1
+    [M:ZDIA]ZSEL(ZN)=2
+    Affzo [M:ZDIA]ZSEL(ZN)
+  Next
+#Endif
+Return
+
+#######################################################################################
+$OUVRE
+Return
+
+#######################################################################################
+$CONTROLE
+SYMBOLE=""
+If !GOK   Return  Endif
+
+If !GBATCH and !GSERVEUR
+  Local Integer OKSINO : OKSINO = 1
+  Call OUINON("¿Desea lanzar la sincronización?", OKSINO) From GESECRAN
+  If OKSINO <> 2
+    GOK=0
+    Return
+  Endif
+Endif
+
+ZSYMBOLE=[M:ZDIA]ZAPLICACION+"->X3"
+If !func ZCOMUN.BLOQUEAR(SYMBOLE)  # Comprobar que el proceso no está en marcha, antes de comenzar
+  GMESSAGE="Proceso"-ZSYMBOLE-"en curso. No se permite ejecución simultánea. De continuar error, revise <<simbolos bloqueados>>"
+  Call ERREUR (GMESSAGE) From GESECRAN
+  GOK=0
+  Return
+Endif
+Return
+
+#######################################################################################
+$EXEC
+If !GOK        Return           Endif
+If GSERVEUR    Onerrgo ERRBATCH Endif
+Local Integer ZN
+
+# Traza inicial
+Gosub GEN_DEF_VAR From ZCOMUN
+WOPE="Sincronización de mensajes"-[M:ZDIA]ZAPLICACION-"-> X3"
+Gosub TRAZA_ABRIR From ZCOMUN
+
+For ZN=0 To [M:ZDIA]NBLIG-1
+  If [M:ZDIA]ZSEL(ZN)=2 Then
+    Call ALIMENTAR([M:ZDIA]ZAPLICACION,[M:ZDIA]ZIDSMS(ZN)) From ZINTMON
+    If [M:ZDIA]ZSENTIDO=2 Then
+      Call PROCESAR([M:ZDIA]ZAPLICACION,[M:ZDIA]ZIDSMS(ZN),[M:ZDIA]ZFECGRAINI,[M:ZDIA]ZFECGRAFIN)
+    Endif
+  Endif
+Next
+
+#If GSERVEUR Then
+#  Onerrgo
+#Else
+  Call ESCRIBIR_TRAZA_ERROR([M:ZDIA]ZAPLICACION)
+  Gosub CERRAR_TRAZA From ZCOMUN
+#Endif
+Return
+
+#######################################################################################
+$SORTIE
+Raz GMESSAGE
+If ZSYMBOLE<>""  Unlock =ZSYMBOLE   Endif
+Return
+
+#######################################################################################
+#      R U T I N A S
+#######################################################################################
+$ERRBATCH
+Call ECR_TRACE("Error"-num$(errn)-"raised on line"-num$(errl)-"in script"-errp-"Message:"-errmes$(errn)-"Additional details:"-errm,1) From GESECRAN
+End
+
+#######################################################################################
+Subprog VACIAR_REJILLA
+Raz   [M:ZIM1]NBLIG
+Effzo [M:ZIM1]5
+End
+
+#######################################################################################
+Subprog ESCRIBIR_TRAZA_ERROR(PZAPLICACION)
+Value Char PZAPLICACION
+Local Integer NMES
+Local Char ZTABLA(30)
+Local Char NOMBRE_TRAZA(250)
+Local Char SYMBOLE_TRAZA(100)
+Local Char ZMESTRAZA(250)
+Local Char ZCAMPO(30)
+Local Char ZTEMP(250)
+Local Char ZNOMFIC(250)
+
+Gosub DEF_VAR_SQL From ZCOMUN
+#F+=1 : TXT(F)="SELECT ADI6902.A2_0 "
+#Gosub DEF_SQL_ADI_SMS From ZINTLIB
+#F+=1 : TXT(F)="AND ADI6900.CODE_0='"+PZAPLICACION+"' "
+#F+=1 : TXT(F)="WHERE ADI6902.A2_0<>'' "
+#F+=1 : TXT(F)="ORDER BY ADI6902.N2_0 ASC"
+F+=1 : TXT(F)="SELECT ZS.ZATBCAB_0,ZS.ZSENTIDO_0 FROM ZDEFAPPD ZA INNER JOIN ZDEFSMS ZS ON ZA.ZCODSMS_0=ZS.ZCODSMS_0 WHERE ZA.ZCODAPP_0='"+PZAPLICACION+"'"
+For (Char ZTABLA(GLONATB),Integer ZSENTIDO) From BD Sql TXT As [ZREG]
+  If [ZREG]ZSENTIDO=2 and vireblc([ZREG]ZTABLA,2)<>"" Then
+    Local File =[ZREG]ZTABLA [ZTAB]
+    Filter [ZTAB]
+    Filter [ZTAB] Where ZSTA=99 Order By ZTRAZA
+    For [ZTAB]
+      If ZTEMP<>[ZTAB]ZTRAZA
+        If GSERVEUR
+          ZNOMFIC = [ZTAB]ZTRAZA # D:\Sage\X3V12\folders\X3\SRV\TRA\RQT00495829.tra
+        Else
+          ZNOMFIC = filpath("TRA",[ZTAB]ZTRAZA,"tra",nomap,"",adxmac(0))
+        Endif
+      Endif
+      ZTEMP=[ZTAB]ZTRAZA
+
+      # Montamos el texto del símbolo bloqueado
+      If !GSERVEUR Then
+        SYMBOLE_TRAZA=PZAPLICACION+"->X3~"+[ZTAB]ZTRAZA
+      Else
+        SYMBOLE_TRAZA=PZAPLICACION+"->X3~"+mid$([ZTAB]ZTRAZA,instr(1,[ZTAB]ZTRAZA,"\TRA\")+5,len([ZTAB]ZTRAZA))
+      Endif
+      If func ZCOMUN.BLOQUEAR(SYMBOLE_TRAZA) # Comprobamos si el proceso de importación ha finalizado y la traza está desbloqueada
+        Raz ZMESTRAZA
+        ZMESTRAZA=func ZCOMUN.TRAZA_ERROR([ZTAB]ZTRAZA,"Inicio IdExterna:"-PZAPLICACION+"~"+[ZTAB]ZIDEXT,"Fin IdExterna:"-PZAPLICACION+"~"+[ZTAB]ZIDEXT)
+        [ZTAB]ZMSG=ZMESTRAZA
+        [ZTAB]ZSTA=3
+        Rewrite [ZTAB]
+
+        If GFONCTION = "ZWSTRACE" and GSERVEUR
+          Gosub DESBLOQUEAR_TRAZA
+        Endif
+      Endif
+    Next
+    Close File [ZTAB]
+  Endif
+Next
+
+End
+
+#######################################################################################
+$DESBLOQUEAR_TRAZA
+If SYMBOLE_TRAZA<>""  Unlock =SYMBOLE_TRAZA   Endif
+Return
+
+#######################################################################################
+Subprog PROCESAR(PZAPLICACION,PZIDSMS,PZFECINI,PZFECFIN)
+Value Char PZAPLICACION, PZIDSMS
+Value Date PZFECINI, PZFECFIN
+Local Char    ZWHERE(250)
+
+If clalev([F:ZDS])<=0 Local File ZDEFSMS [ZDS] Endif
+
+# Filtros
+ZWHERE="1=1"
+ZWHERE+=" & [ZSMS]ZSTA=1 "
+If num$(PZFECINI)<>"00/00/0000" and num$(PZFECFIN)<>"00/00/0000" Then
+  ZWHERE+=" & ([ZSMS]CREDATTIM>=PZFECINI & [ZSMS]CREDATTIM<=PZFECFIN) "
+Elsif num$(PZFECINI)<>"00/00/0000" and num$(PZFECFIN)="00/00/0000" Then
+  ZWHERE+=" & ([ZSMS]CREDATTIM>=PZFECINI) "
+Elsif num$(PZFECINI)="00/00/0000" and num$(PZFECFIN)<>"00/00/0000" Then
+  ZWHERE+=" & ([ZSMS]CREDATTIM<=PZFECFIN) "
+Endif
+
+#ZWHERE+=" & [ZSMS]ZIDEXT='1781859451892'"
+
+# Extraemos las tablas asociadas al mensaje y el tipo de mensaje
+# La tabla de cabecera es la que recorremos para comprobar los registros pendientes de importar
+Read [F:ZDS]=PZIDSMS
+If fstat<>0 Then
+  Call ECR_TRACE("Definición no encontrada para el mensaje:"-PZIDSMS,-1) From GESECRAN
+  End
+Endif
+
+If [F:ZDS]ZATBCAB="" Then End Endif
+
+# Declaramos la tabla de cabeceras
+Local File =[F:ZDS]ZATBCAB [ZSMS]
+
+Filter [F:ZSMS] Where evalue(ZWHERE) Order By CREDATTIM
+For [F:ZSMS]
+  Raz GMESSAGE
+
+  # Traza - Cabecera del inicio del mensaje
+  Call ECR_TRACE(string$(80,"+"),0)                                       From GESECRAN
+  Call ECR_TRACE("Inicio IdExterna:"-PZAPLICACION+"~"+[F:ZSMS]ZIDEXT,0)   From GESECRAN
+  Call ECR_TRACE("Tipo mov.:"-mess([F:ZDS]ZTIPOSMS,6902,1),0)             From GESECRAN
+
+  # Llamada al proceso de generación e importacíon del XML
+  # en función del tipo de movimiento
+  Case [F:ZDS]ZTIPOSMS
+    When 1 : Call GEN_SEG_PRODUCTO([F:ZDS]ZATBCAB,[F:ZDS]ZATBLIN,[F:ZSMS]ZIDEXT,[F:ZDS]ZMODIMP,[F:ZDS]ZTIPOSMS)                               From ZINTPRO
+    When 2 : Call GEN_SEG_CONSUMO([F:ZDS]ZATBCAB,[F:ZDS]ZATBLIN,[F:ZSMS]ZIDEXT,[F:ZDS]ZMODIMP,[F:ZDS]ZTIPOSMS)                                From ZINTPRO
+    When 3 : Call GEN_SEG_OPERACION([F:ZDS]ZATBCAB,[F:ZDS]ZATBLIN,[F:ZSMS]ZIDEXT,[F:ZDS]ZMODIMP,[F:ZDS]ZTIPOSMS)                              From ZINTPRO
+    When 4 : Call GEN_CAMBIO_UBICACION([F:ZDS]ZATBCAB,[F:ZDS]ZATBLIN,[F:ZSMS]ZIDEXT,[F:ZDS]ZMODIMP,[F:ZDS]ZTIPOSMS)                           From ZINTSTK
+    When 5:  Call GEN_GAS([F:ZDS]ZATBCAB,[F:ZDS]ZATBLIN,[F:ZSMS]ZIDEXT,[F:ZDS]ZMODIMP,[F:ZDS]ZTIPOSMS)                                        From ZINTGAS
+    When 6:  Call GEN_FAC_TERCERO_PROVEEDOR(PZAPLICACION,PZIDSMS,[F:ZDS]ZATBCAB,[F:ZDS]ZATBLIN,[F:ZSMS]ZIDEXT,[F:ZDS]ZMODIMP,[F:ZDS]ZTIPOSMS) From ZINTCPT
+    When 7:  Call GEN_BPC([F:ZDS]ZATBCAB,[F:ZDS]ZATBLIN,[F:ZSMS]ZIDEXT,[F:ZDS]ZMODIMP,[F:ZDS]ZTIPOSMS)                                        From ZINTTER
+    When 14: Call GEN_SALIDA_VARIA([F:ZDS]ZATBCAB,[F:ZDS]ZATBLIN,[F:ZSMS]ZIDEXT,[F:ZDS]ZMODIMP,[F:ZDS]ZTIPOSMS)                               From ZINTSTK
+    When 15: Call GEN_ENTRADA_VARIA([F:ZDS]ZATBCAB,[F:ZDS]ZATBLIN,[F:ZSMS]ZIDEXT,[F:ZDS]ZMODIMP,[F:ZDS]ZTIPOSMS)                              From ZINTSTK
+    When 16: Call GEN_RECEPCION_COMPRA([F:ZDS]ZATBCAB,[F:ZDS]ZATBLIN,[F:ZSMS]ZIDEXT,[F:ZDS]ZMODIMP,[F:ZDS]ZTIPOSMS)                           From ZINTCOM
+    When 17: Call GEN_PREPARACION_MATERIAL([F:ZDS]ZATBCAB,[F:ZDS]ZATBLIN,[F:ZSMS]ZIDEXT,[F:ZDS]ZMODIMP,[F:ZDS]ZTIPOSMS)                       From ZINTPDA
+    # añadir 7 y 8 -- clientes y ped.ven
+  Endcase
+
+  # Traza - Pie del fin del mensaje
+  Call ECR_TRACE("Fin IdExterna:"-PZAPLICACION+"~"+[F:ZSMS]ZIDEXT,0)     From GESECRAN
+Next
+Filter [F:ZSMS]
+Close File [F:ZSMS]
+End
+
+#######################################################################################
+#      A C C I O N E S       C A M P O
+#######################################################################################
+Subprog AM_ZAPLICACION(VALEUR)
+Variable Char    VALEUR()
+Raz [M:ZDIA]NBLIG
+Effzo [M:ZDIA]10
+Call LLENAR_REJ_MENSAJES(VALEUR,[M:ZDIA]ZSENTIDO,"ZDIA") From ZINTLIB
+Affzo [M:ZDIA]
+End
+
+#######################################################################################
+Subprog AM_ZSENTIDO(VALEUR)
+Variable Integer    VALEUR()
+If [M:ZDIA]ZAPLICACION="" Then End Endif
+Raz [M:ZDIA]NBLIG
+Effzo [M:ZDIA]10
+Call LLENAR_REJ_MENSAJES([M:ZDIA]ZAPLICACION,VALEUR,"ZDIA") From ZINTLIB
+Affzo [M:ZDIA]
+Diszo [M:ZDIA]ZFECGRAINI
+End
+
+######################################################################################

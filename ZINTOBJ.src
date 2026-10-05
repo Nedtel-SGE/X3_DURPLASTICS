@@ -1,0 +1,93 @@
+#<AdxTL>@(#)0.0.0.0 $Revision$
+#######################################################################################
+# Fuente.....: ZINTOJB  -  Nodo de integración
+#######################################################################################
+
+#######################################################################################
+#      A C C I O N E S
+#######################################################################################
+$ACTION
+Case ACTION
+  When "OUVRE"       : Gosub OUVRE
+  When "LIENS"       : Gosub LIENS
+  When "DEVERROU"    : Gosub DEVERROU
+Endcase
+Return
+
+#######################################################################################
+$OUVRE
+If func AFNC.ACTIV("ZZINT")
+  If clalev([F:ZIOJ])<=0  Local File ZINTOBJ   [ZIOJ] Endif
+Endif
+Return
+
+#######################################################################################
+$LIENS
+If func AFNC.ACTIV("ZZINT")
+  Gosub READ_REGISTRO_INTEGRACION
+Endif
+Return
+
+#######################################################################################
+$DEVERROU
+If func AFNC.ACTIV("ZZINT")
+  Gosub SET_FIELD_NUM
+  Call DEL_REGISTRO_ZINTOBJ(evalue(ZFLDNUM),GABREV) From ZINTLIB
+Endif
+Return
+
+#######################################################################################
+#      R U T I N A S
+#######################################################################################
+$READ_REGISTRO_INTEGRACION
+Local Integer NB
+
+Gosub SET_FIELD_NUM
+
+# Cargar registros del Hub integracion
+Filter [F:ZIOJ] Where ZOBJETO = GABREV and ZIDX3 = evalue(ZFLDNUM)
+For [F:ZIOJ]
+  [M:ZINTOBJ]ZCODAPP(NB)     = [F:ZIOJ]ZCODAPP
+  [M:ZINTOBJ]ZOBJETO(NB)     = [F:ZIOJ]ZOBJETO
+  [M:ZINTOBJ]ZIDX3(NB)       = [F:ZIOJ]ZIDX3
+  [M:ZINTOBJ]ZIDEXT(NB)      = [F:ZIOJ]ZCODSMS
+  [M:ZINTOBJ]ZIDENL(NB)      = [F:ZIOJ]ZIDENL
+  [M:ZINTOBJ]ZCODSMS(NB)     = [F:ZIOJ]ZCODSMS
+  [M:ZINTOBJ]ZFECHORSMS(NB)  = [F:ZIOJ]ZFECHORSMS
+  [M:ZINTOBJ]ZPROP1(NB)      = [F:ZIOJ]ZPROP(0)
+  [M:ZINTOBJ]ZPROP2(NB)      = [F:ZIOJ]ZPROP(1)
+  [M:ZINTOBJ]ZPROP3(NB)      = [F:ZIOJ]ZPROP(2)
+  [M:ZINTOBJ]ZPROP4(NB)      = [F:ZIOJ]ZPROP(3)
+  [M:ZINTOBJ]ZPROP5(NB)      = [F:ZIOJ]ZPROP(4)
+  [M:ZINTOBJ]ZPROP6(NB)      = [F:ZIOJ]ZPROP(5)
+  [M:ZINTOBJ]ZPROP7(NB)      = [F:ZIOJ]ZPROP(6)
+  [M:ZINTOBJ]ZPROP8(NB)      = [F:ZIOJ]ZPROP(7)
+  [M:ZINTOBJ]ZPROP9(NB)      = [F:ZIOJ]ZPROP(8)
+  [M:ZINTOBJ]ZPROP10(NB)     = [F:ZIOJ]ZPROP(9)
+  NB+=1
+Next
+Filter [F:ZIOJ]
+
+[M:ZINTOBJ]NBNODO = NB
+Affzo [M:ZINTOBJ]13
+Return
+
+#######################################################################################
+$SET_FIELD_NUM
+Local Char ZFLDNUM(25)
+
+# En función del objeto, extraemos el número de X3
+Case GABREV
+  When "BIS" : ZFLDNUM="[M:BIS0]NUM"
+  When "BPC" : ZFLDNUM="[M:BPC0]BPCNUM"
+Endcase
+Return
+
+#######################################################################################
+Subprog B1_NBNODO
+If [M:ZINTOBJ]ZPROP1(nolign-1) <> ""
+   Callui RETVALUE="" With "UIAction="   +chr$(1)+"OpenFile",
+&                           "UILocalDir=" +chr$(1)+"HTTPS",
+&                           "UILocalFile="+chr$(1)+func ZCOMUN.REPLACE_T([M:ZINTOBJ]ZPROP1(nolign-1),"https://","") # Quitamos el https:// porque ya lo concatena el UILocalDir
+Endif
+End

@@ -1,0 +1,35 @@
+#<AdxTL>@(#)0.0.0.0 $Revision$
+# Gestión de la máscara ZBPC1 (Especifico)
+
+######################################################################################
+## Etiqueta añadida por el supervisor (pantalla ZBPC1) 03/08/2018 13:06:36 (RCEBR)
+######################################################################################
+$ACTION
+Case ACTION
+ When Default
+Endcase
+
+# EDI de ventas de AZETA
+If func AFNC.ACTIV("ZEDIV")
+   Gosub ACTION From ZSPEBPC_ZEDIV
+Endif
+
+Gosub ACTION From ZINTOBJ
+Return
+
+Subprog D_ZDOC(VALEUR)
+Variable Clbfile VALEUR
+End
+
+
+######################################################################################
+
+######################################################################################
+## Etiqueta añadida por el supervisor (pantalla ZBPC1) 03/08/2018 14:14:45 (RCEBR)
+######################################################################################
+Subprog D_ZDIR(VALEUR)
+Variable Clbfile VALEUR
+End
+
+
+######################################################################################

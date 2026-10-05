@@ -1,0 +1,229 @@
+#<AdxTL>@(#)0.0.0.0 $Revision$
+#######################################################################################
+# Fuente.....: ZPEZINTMON  -  Script punto de entrada monitor de mensajes
+#######################################################################################
+# WRIBDCABEXX3 - Para intervenir previo a la grabación de los registros en la tabla de cabeceras
+# WRIBDLINEXX3 - Para intervenir previo a la grabación de los registros en la tabla de líneas
+# WRIFILE      - Tratamiento de los ficheros en modo telecarga/FTP
+
+#######################################################################################
+#      A C C I O N E S
+#######################################################################################
+$ACTION
+Case ACTION
+  When "WRIBDCABEXX3" : Gosub WRIBDCABEXX3
+  When "WRIBDLINEXX3" : Gosub WRIBDLINEXX3
+  When "WRIFILE"      : Gosub WRIFILE
+  When "VOLCADOWS"    : Gosub VOLCADOWS
+  When "ENVIOWS"      : Gosub ENVIOWS
+  When "DESC_MONITOR" : Gosub DESC_MONITOR
+Endcase
+Return
+
+#######################################################################################
+$WRIBDCABEXX3
+Return
+
+#######################################################################################
+$WRIBDLINEXX3
+Return
+
+#######################################################################################
+$WRIFILE
+Return
+
+#######################################################################################
+$VOLCADOWS
+If GFONCTION1="ZINTMON" Then Return Endif
+Return
+
+#######################################################################################
+$ENVIOWS
+If GFONCTION1="ZINTMON" Then Return Endif
+
+# Abrimos la vista
+If [F:ZDFS]ZVISTA<>"" Then Local File =[F:ZDFS]ZVISTA [ZVIS] Endif
+
+Local Integer ZNBERR
+Case PZSMS
+  When "ZBPCX3IX", "ZITMX3IX"
+    ZNBERR = func ZINT_ENVIA_INEXION(PZAPP, PZSMS)
+Endcase
+Return
+
+#######################################################################################
+$DESC_MONITOR
+If [M:ZIM0]ZAPLICACION="DCW" and ZIDSMS="ZINTBIS" Then
+  Gosub DEF_VAR_SQL From ZCOMUN
+  F+=1 : TXT(F)="SELECT NUM_0 FROM"-[F:ZDS]ZATBCAB-"WHERE ZIDEXT_0='"+[MYT]ZID+"'"
+  For (Char ZNUM(GLONVCR)) From BD Sql TXT As [ZR]
+    ZDESCRIPCION="Factura Docuware Nº"-[ZR]ZNUM
+  Next
+Endif
+Return
+
+#######################################################################################
+# ZINT_ENVIA_INEXION - Envío de entidades a Inexion (MES) por REST
+# PZAPP : código de aplicación
+# PZSMS : código de mensaje (ZBPCX3IX = clientes / ZITMX3IX = artículos)
+# La vista [ZVIS] debe venir abierta desde el punto de entrada
+# Estructura común de las vistas: código del registro + ZJSON (JSON ya construido)
+# El endpoint se toma de [F:ZDAP]ZSUBFLD
+# Cada envío correcto crea/actualiza su registro de control en ZINTOBJ
+# Si no hay errores, guarda en ADOVAL la fecha/hora de inicio del envío
+# Devuelve el número de envíos con error (-1 si no se puede iniciar el envío)
+#######################################################################################
+Funprog ZINT_ENVIA_INEXION(PZAPP, PZSMS)
+Value Char PZAPP()
+Value Char PZSMS()
+
+# --- Variables comunes a todas las entidades
+Local Char    WSCODE(20)
+Local Char    HTTPMETHOD(10)   : HTTPMETHOD = "POST"
+Local Char    SUBURL(250)
+Local Char    HEADNAMES(250)(1..10)
+Local Char    HEADVALUES(250)(1..10)
+Local Char    PARAMNAMES(250)(1..10)
+Local Char    PARAMVALUES(250)(1..10)
+Local Clbfile WBODY(2)
+Local Clbfile RESHEAD
+Local Clbfile RESBODY
+Local Integer HTTPSTATUS, NBOK, NBERR
+Local Integer NBCRE, NBACT             : # Elementos creados / actualizados
+Local Char    ZENT(20)                 : # Tipo de entidad para la traza (Cliente / Artículo)
+Local Char    ZOBJ(10)                 : # Objeto X3 para la tabla de control ZINTOBJ
+Local Char    ZPROP(250)(1..10)        : # Propiedades para la tabla de control ZINTOBJ
+Local Char    ZCLAVE(50)               : # Código del registro (Id X3)
+Local Char    ZREG(100)                : # Etiqueta del registro para la traza
+Local Char    ZRESP(250)               : # Respuesta de Inexion (recortada)
+Local Char    ZPARFEC(30)              : # Parámetro ADOVAL con la fecha/hora de actualización
+Local Char    ZFECHOR(20)              : # Fecha/hora de inicio del envío (DD/MM/YYYY hh:mm:ss)
+Local Integer ZRETPAR                  : # Resultado de la actualización del parámetro
+
+# --- Servicio web REST declarado en X3 para la aplicación
+WSCODE = func ZINTLIB.GET_PARAM_VAL_APP(PZAPP, "ws_name")
+If WSCODE = ""
+  Call ECR_TRACE("Aplicación " + PZAPP + ": parámetro ws_name no informado", 1) From GESECRAN
+  End -1
+Endif
+
+# --- Endpoint configurado en el mensaje
+SUBURL = [F:ZDAP]ZSUBFLD
+If SUBURL = ""
+  Call ECR_TRACE("Aplicación " + PZAPP + " - mensaje " + PZSMS + ": endpoint (ZSUBFLD) no informado", 1) From GESECRAN
+  End -1
+Endif
+
+# --- Mensajes implementados
+Case PZSMS
+  When "ZBPCX3IX" : ZENT = "Cliente"  : ZOBJ = "BPC" : ZPARFEC = "ZULTFECCLI"
+  When "ZITMX3IX" : ZENT = "Artículo" : ZOBJ = "ITM" : ZPARFEC = ""
+  When Default
+    Call ECR_TRACE("Aplicación " + PZAPP + " - mensaje no implementado: " + PZSMS, 1) From GESECRAN
+    End -1
+Endcase
+
+# --- Vista de datos
+If !clalev([F:ZVIS])
+  Call ECR_TRACE("Vista [ZVIS] no abierta", 1) From GESECRAN
+  End -1
+Endif
+
+# --- Cabeceras (valores SIEMPRE entre comillas dobles)
+HEADNAMES(1) = "Content-Type" : HEADVALUES(1) = '"application/json"'
+HEADNAMES(2) = "Accept"       : HEADVALUES(2) = '"application/json"'
+
+# --- Fecha/hora de inicio del envío (se guarda al final si no hay errores)
+ZFECHOR = format$("D:DD[/]MM[/]YYYY", date$) + " " + time$
+
+Call ECR_TRACE(string$(50,"-"), 0) From GESECRAN
+Call ECR_TRACE("Envío a " + WSCODE + SUBURL + " - aplicación " + PZAPP + " - mensaje " + PZSMS, 0) From GESECRAN
+
+Filter [F:ZVIS]
+For [F:ZVIS]
+
+  # Código del registro según mensaje
+  Case PZSMS
+    When "ZBPCX3IX" : ZCLAVE = [F:ZVIS]BPCNUM
+    When "ZITMX3IX" : ZCLAVE = [F:ZVIS]ITMREF
+  Endcase
+  ZREG = ZENT + " " + ZCLAVE
+
+  # JSON del registro, construido en la vista (campo común ZJSON)
+  WBODY = [F:ZVIS]ZJSON
+
+  If WBODY = ""
+    NBERR += 1
+    Call ECR_TRACE(ZREG + " -> Error (la vista no ha devuelto JSON)", 1) From GESECRAN
+  Else
+    # Envío a la API
+    RESHEAD = "" : RESBODY = ""
+    HTTPSTATUS = func ASYRRESTCLI.EXEC_REST_WS(WSCODE, HTTPMETHOD, SUBURL, PARAMNAMES, PARAMVALUES, HEADNAMES, HEADVALUES, WBODY, 0, "", RESHEAD, RESBODY)
+
+    Call ECR_TRACE("DBG JSON enviado: " + WBODY, 0) From GESECRAN                    : # DBG
+    Call ECR_TRACE("DBG HTTPSTATUS : " + num$(HTTPSTATUS), 0) From GESECRAN          : # DBG
+    Call ECR_TRACE("DBG RESHEAD    : " + left$(RESHEAD, 250), 0) From GESECRAN       : # DBG
+    Call ECR_TRACE("DBG RESBODY    : " + left$(RESBODY, 250), 0) From GESECRAN       : # DBG
+
+    Gosub INX_CONTROL_RESPUESTA
+  Endif
+
+Next
+Filter [F:ZVIS]
+
+Call ECR_TRACE("Correctos: " + num$(NBOK) + " (creados: " + num$(NBCRE) + ", actualizados: " + num$(NBACT) + ") - Con error: " + num$(NBERR), 0) From GESECRAN
+
+# --- Fecha/hora de la última actualización en ADOVAL (solo si no hay errores)
+If ZPARFEC <> ""
+  If NBERR = 0
+    ZRETPAR = func ZINTLIB.UPD_PARAM_ADOVAL(ZPARFEC, ZFECHOR)
+  Else
+    Call ECR_TRACE("Hay envíos con error: no se actualiza el parámetro " + ZPARFEC, 1) From GESECRAN
+  Endif
+Endif
+
+Call ECR_TRACE(string$(50,"-"), 0) From GESECRAN
+
+End NBERR
+
+#######################################################################################
+# Control de la respuesta - común
+# Correcto = HTTP 2xx + texto "... creado con éxito." / "... actualizado con éxito."
+# Cualquier otro caso (incluido un 200 sin esos textos) es error
+#######################################################################################
+$INX_CONTROL_RESPUESTA
+ZRESP = left$(RESBODY, 250)
+
+If HTTPSTATUS >= 200 & HTTPSTATUS < 300 & instr(1, toupper(ZRESP), "CREADO CON") > 0
+  NBOK += 1 : NBCRE += 1
+  Call ECR_TRACE(ZREG + " -> Correcto (creado)", 0) From GESECRAN
+  Gosub INX_REGISTRO_CONTROL
+
+Elsif HTTPSTATUS >= 200 & HTTPSTATUS < 300 & instr(1, toupper(ZRESP), "ACTUALIZADO CON") > 0
+  NBOK += 1 : NBACT += 1
+  Call ECR_TRACE(ZREG + " -> Correcto (actualizado)", 0) From GESECRAN
+  Gosub INX_REGISTRO_CONTROL
+
+Else
+  NBERR += 1
+  If HTTPSTATUS = 0
+    Call ECR_TRACE(ZREG + " -> Error (sin respuesta de Inexion)", 1) From GESECRAN
+  Else
+    Call ECR_TRACE(ZREG + " -> Error (HTTP " + num$(HTTPSTATUS) + ")", 1) From GESECRAN
+  Endif
+  If ZRESP <> ""
+    Call ECR_TRACE("    Respuesta: " + ZRESP, 1) From GESECRAN
+  Endif
+Endif
+Return
+
+#######################################################################################
+# Registro de control en ZINTOBJ tras un envío correcto - común
+# Clave: aplicación + objeto + Id X3 (código del registro enviado)
+#######################################################################################
+$INX_REGISTRO_CONTROL
+Raz ZPROP
+# <- rellenar aquí las propiedades que haya que guardar, p.ej.:
+# ZPROP(1) = ...
+Call CRE_UPD_REGISTRO_ZINTOBJ(PZAPP, PZSMS, ZOBJ, ZCLAVE, "", "", ZPROP) From ZINTLIB
+Return

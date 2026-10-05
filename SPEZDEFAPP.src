@@ -1,0 +1,134 @@
+#<AdxTL>@(#)0.0.0.0 $Revision$
+#######################################################################################
+# Fuente.....: SPEZDEFAPP  -  Definición de aplicaciones
+#--------------------------------------------------------------------------------------
+#######################################################################################
+$ACTION
+Return
+
+#######################################################################################
+#      A C C I O N E S
+#######################################################################################
+
+#######################################################################################
+#      S U B R U T I N A S
+#######################################################################################
+Subprog SET_VISINV(PZVAL)
+Value Integer PZVAL
+
+If PZVAL=0 Then
+  Chgfmt [M:ZDAP2]ZHOST     With "-K:10"
+  Chgfmt [M:ZDAP2]ZUIDCON   With "-K:10"
+  Chgfmt [M:ZDAP2]ZPWDCON   With "-K:10"
+  Chgfmt [M:ZDAP2]ZFLDFTP   With "-K:10"
+  Chgfmt [M:ZDAP2]ZFLDLOCAL With "-K:10"
+  Chgfmt [M:ZDAP2]ZFLDPRO   With "-K:10"
+  Chgfmt [M:ZDAP2]ZFLDERR   With "-K:10"
+Else
+  Chgfmt [M:ZDAP2]ZHOST     With "+K:10"
+  Chgfmt [M:ZDAP2]ZUIDCON   With "+K:10"
+  Chgfmt [M:ZDAP2]ZPWDCON   With "+K:10"
+  Chgfmt [M:ZDAP2]ZFLDFTP   With "+K:10"
+  Chgfmt [M:ZDAP2]ZFLDLOCAL With "+K:10"
+  Chgfmt [M:ZDAP2]ZFLDPRO   With "+K:10"
+  Chgfmt [M:ZDAP2]ZFLDERR   With "+K:10"
+Endif
+End
+
+#######################################################################################
+#      A C C I O N E S   D E   C A M PO
+#######################################################################################
+Subprog AM_ZCODSMS(VALEUR)
+Variable Char    VALEUR()
+Gosub DEF_VAR_CFGSMS From ZINTLIB
+Call GET_INFO_SMS(VALEUR,ZDESSMS) From ZINTLIB
+[M:ZDAP1]ZDESSMS(nolign-1) = ZDESSMS
+Affzo [M:ZDAP1]ZDESSMS
+End
+
+######################################################################################
+Subprog AM_ZTIPCON(VALEUR)
+Variable Integer VALEUR
+
+# Hacemos invisibles todos los campos
+Call SET_VISINV(0)
+
+# Sólo mostramos las opciones de tipo de llamada cuando la conexión es del tipo Web Service
+If VALEUR=2 Then
+  Chgfmt [M:ZDAP2]ZTIPLLA With "+K:10"
+  Call AM_ZTIPLLA([M:ZDAP2]ZTIPLLA)
+Else
+  Chgfmt [M:ZDAP2]ZTIPLLA   With "-K:10"
+Endif
+
+# Sólo hacemos visible la opción 'Modo de carga' cuando el tipo de conexión es 'Fichero Plano'
+If VALEUR=3 Then
+  Chgfmt [M:ZDAP2]ZMODTXT With "+K:10"
+  Call AM_ZMODTXT([M:ZDAP2]ZMODTXT)
+Else
+  Chgfmt [M:ZDAP2]ZMODTXT With "-K:10"
+Endif
+#
+## Mostramos el resto de campos según el tipo de conexión
+If VALEUR=1 Then
+  Chgfmt [M:ZDAP2]ZUIDCON   With "+K:10"
+  Chgfmt [M:ZDAP2]ZPWDCON   With "+K:10"
+Elsif VALEUR=2 Then
+  Chgfmt [M:ZDAP2]ZHOST     With "+K:10"
+  Chgfmt [M:ZDAP2]ZUIDCON   With "+K:10"
+  Chgfmt [M:ZDAP2]ZPWDCON   With "+K:10"
+Elsif VALEUR=3 Then
+  Chgfmt [M:ZDAP2]ZFLDLOCAL With "+K:10"
+  Chgfmt [M:ZDAP2]ZFLDPRO   With "+K:10"
+  Chgfmt [M:ZDAP2]ZFLDERR   With "+K:10"
+  If [M:ZDAP2]ZMODTXT=2 Then
+    Chgfmt [M:ZDAP2]ZHOST     With "+K:10"
+    Chgfmt [M:ZDAP2]ZUIDCON   With "+K:10"
+    Chgfmt [M:ZDAP2]ZPWDCON   With "+K:10"
+    Chgfmt [M:ZDAP2]ZFLDFTP   With "+K:10"
+  Else
+    Chgfmt [M:ZDAP2]ZHOST     With "-K:10"
+    Chgfmt [M:ZDAP2]ZUIDCON   With "-K:10"
+    Chgfmt [M:ZDAP2]ZPWDCON   With "-K:10"
+    Chgfmt [M:ZDAP2]ZFLDFTP   With "-K:10"
+  Endif
+Endif
+
+## Modificamos las etiquetas de los campos
+If VALEUR=1 Then
+  Chgtzn [M:ZDAP2]ZUIDCON With "Usuario SQL"
+  Chgtzn [M:ZDAP2]ZPWDCON With "Password SQL"
+Endif
+
+End
+
+######################################################################################
+Subprog AM_ZMODTXT(VALEUR)
+Variable Integer VALEUR
+# Si el modo de carga es 'Telecarga' sólo hacemos visible los campos donde se definen las carpetas
+If [M:ZDAP2]ZTIPCON=3 and VALEUR=1 Then
+  Call SET_VISINV(0)
+  Chgfmt [M:ZDAP2]ZFLDLOCAL With "+K:10"
+  Chgfmt [M:ZDAP2]ZFLDPRO   With "+K:10"
+  Chgfmt [M:ZDAP2]ZFLDERR   With "+K:10"
+Else
+  Call SET_VISINV(1)
+  Chgtzn [M:ZDAP2]ZHOST   With "Host FTP"
+  Chgtzn [M:ZDAP2]ZUIDCON With "Usuario FTP"
+  Chgtzn [M:ZDAP2]ZPWDCON With "Password FTP"
+Endif
+End
+
+######################################################################################
+Subprog AM_ZTIPLLA(VALEUR)
+Variable Integer VALEUR
+If VALEUR=1 Then
+  Chgtzn [M:ZDAP2]ZHOST   With "URL Base Web Service"
+  Chgtzn [M:ZDAP2]ZUIDCON With "Usuario Web Service"
+  Chgtzn [M:ZDAP2]ZPWDCON With "Password Web Service"
+Else
+  Chgtzn [M:ZDAP2]ZHOST   With "URL X3"
+  Chgtzn [M:ZDAP2]ZUIDCON With "Usuario X3"
+  Chgtzn [M:ZDAP2]ZPWDCON With "Password X3"
+Endif
+End

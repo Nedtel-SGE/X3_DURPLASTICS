@@ -1,0 +1,63 @@
+#<AdxTL>@(#)0.0.0.0 $Revision$
+#######################################################################################
+# Fuente.....: SUBZDEFSMS  -  Definición de mensajes
+#--------------------------------------------------------------------------------------
+#######################################################################################
+
+#######################################################################################
+#      A C C I O N E S
+#######################################################################################
+$ACTION
+Case ACTION
+  When "CREATION" : Gosub CREATION
+  When "MODIF"    : Gosub MODIF
+  When "LIENS"    : Gosub LIENS
+Endcase
+Return
+
+#######################################################################################
+$CREATION
+Gosub ASIGNAR_PARAMETROS
+Return
+
+#######################################################################################
+$MODIF
+Gosub ASIGNAR_PARAMETROS
+Return
+
+#######################################################################################
+$LIENS
+Gosub LEER_PARAMETROS
+Return
+
+#######################################################################################
+#      S U B R U T I N A S
+#######################################################################################
+$ASIGNAR_PARAMETROS
+Local Integer ZN
+For ZN=0 To [M:ZDSM1]NBHPAR-1
+  [F:ZDSM]ZHEADPAR(ZN)=[M:ZDSM1]ZHEADPAR(ZN)
+  [F:ZDSM]ZHEADVAL(ZN)=[M:ZDSM1]ZHEADVAL(ZN)
+Next
+Return
+
+#######################################################################################
+$LEER_PARAMETROS
+Raz [M:ZDSM1]NBHPAR
+Local Integer ZN
+
+For ZN = 0 To dim([F:ZDSM]ZHEADPAR)-1
+  If [F:ZDSM]ZHEADPAR(ZN) <> ''
+    [M:ZDSM1]ZHEADPAR(ZN) = [F:ZDSM]ZHEADPAR(ZN)
+    [M:ZDSM1]ZHEADVAL(ZN) = [F:ZDSM]ZHEADVAL(ZN)
+  Else
+    Break
+  Endif
+Next
+[M:ZDSM1]NBHPAR = ZN
+Affzo [M:ZDSM1]10
+Return
+
+#######################################################################################
+#      A C C I O N E S   D E   C A M PO
+#######################################################################################

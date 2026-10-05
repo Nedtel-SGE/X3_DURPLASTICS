@@ -1,0 +1,764 @@
+#<AdxTL>@(#)0.0.0.0 $Revision$
+# Prueba sincronizacion Eclipse - 2026-10-05 16:46:48
+#######################################################################################
+# Fuente.....: ZINTLIB  -  Librería de funciones comunes interfaz X3
+#######################################################################################
+# ÍNDICE DE FUNCIONES
+#
+# Pantalla
+#  LLENAR_REJ_MENSAJES         (Subprog)  Carga en la rejilla de la pantalla los mensajes
+#                                         activos de una aplicación para un sentido dado
+#                                         (ZDEFAPPD + ZDEFSMS)
+#
+# Etiquetas (Gosub)
+#  $DEF_TBL_INT                           Abre las tablas de cabecera/línea de la interfaz
+#                                         (PZTABLA1/PZTABLA2) y ZBPSINVLIGA
+#  $DEF_TBL_STD                           Abre las tablas estándar X3 usadas por la interfaz
+#                                         (fabricación, compras, stock, facturas)
+#  $DEF_VAR_CFGSMS                        Declara las variables de configuración de un mensaje
+#
+# Mensajes y estados de integración
+#  UPD_EST_SMS                 (Subprog)  Actualiza estado, traza, mensaje, nº de intentos y
+#                                         ruta del XML de un registro de la tabla de interfaz
+#  GET_INFO_SMS                (Subprog)  Devuelve la descripción de un mensaje (ZDEFSMS)
+#  GET_HEADER_VAL_MSG          (Funprog)  Devuelve el valor de un parámetro de cabecera de un
+#                                         mensaje (ZHEADPAR/ZHEADVAL de ZDEFSMS)
+#
+# Configuración de aplicaciones
+#  GET_TIPO_CONEXION           (Subprog)  Devuelve el tipo de conexión de una aplicación
+#                                         (ZDEFAPPH)
+#  GET_PARAM_VAL_APP           (Funprog)  Devuelve el valor de un parámetro/token de una
+#                                         aplicación (ZTOKPAR/ZTOKVAL de ZDEFAPPH)
+#
+# Ficheros y FTP
+#  COPIE_DEL_FILES             (Subprog)  Copia los CSV de una carpeta a otra y después los
+#                                         renombra (quita prefijo hasta "_") o los borra
+#  GET_PUT_FICHEROS_FTP        (Subprog)  Sube (PUT) o descarga (GET) ficheros de un FTP/SFTP
+#                                         mediante WinSCP; en GET renombra en origen a .tra
+#
+# Fabricación
+#  GET_STU_ITMREF              (Funprog)  Devuelve la unidad de stock de un material de una
+#                                         OF (MFGMAT)
+#  GET_DESC_SEGUIMIENTO        (Funprog)  Devuelve la descripción de operación de un
+#                                         seguimiento por Id externo (ZMFGOPETRKD)
+#  UPD_SEGUIMIENTO_PREPARACION (Subprog)  Asigna el nº de seguimiento a las preparaciones
+#                                         (ZPREPH) de una OF que aún no lo tienen
+#
+# Consultas genéricas
+#  GET_FIELD_VALUE_TBL         (Funprog)  Devuelve el valor de un campo de cualquier tabla
+#                                         con una cláusula WHERE libre
+#
+# Enlace X3 <-> sistema externo (ZINTOBJ)
+#  CRE_UPD_REGISTRO_ZINTOBJ    (Subprog)  Crea o actualiza el enlace App/Objeto/Id X3 con el
+#                                         Id externo, mensaje y 10 propiedades
+#  DEL_REGISTRO_ZINTOBJ        (Subprog)  Borra el enlace cuando se elimina el registro X3
+#                                         (en facturas BIS, solo si ya no existe)
+#
+# Web services y JSON
+#  GET_WS_HTTP                 (Subprog)  Llama a un WS externo con ASYRWEBSER.EXEC_HTTP y
+#                                         devuelve cabecera, cuerpo y código de estado
+#  ZADDJSON                    (Subprog)  Añade un texto a un CLOB escapado como string JSON
+#
+# Utilidades
+#  ESC_SQL                     (Funprog)  Escapa un literal para SQL (duplica apóstrofos)
+#  ZURLENC                     (Funprog)  Codifica un texto para URL (usuario/clave WinSCP)
+#######################################################################################
+# Revisión 24/09/2026
+#  - UPD_EST_SMS / LLENAR_REJ_MENSAJES / UPD_SEGUIMIENTO_PREPARACION / DEL_REGISTRO_ZINTOBJ:
+#    los literales SQL se escapan con ESC_SQL (apóstrofos)
+#  - GET_PUT_FICHEROS_FTP: eliminada credencial en claro, script WinSCP escrito
+#    directamente (sin echo), contraseña URL-encoded, ficheros temporales borrados,
+#    validación de tipo de conexión antes de abrir ficheros
+#  - COPIE_DEL_FILES: eliminada variable LFICMOV no declarada
+#  - CRE_UPD_REGISTRO_ZINTOBJ: transacción + Readlock, ZCODSMS/ZIDENL correctos,
+#    fecha homogénea, mensaje de error corregido
+#  - DEL_REGISTRO_ZINTOBJ: borrado filtrado también por objeto
+#  - GET_PARAM_VAL_APP / GET_HEADER_VAL_MSG: solo cierran la tabla si la abren ellas,
+#    control de fstat
+#  - GET_STU_ITMREF: se libera el Filter
+#  - ZADDJSON: escapa todos los caracteres de control (< 0x20)
+#  - Nuevas utilidades: ESC_SQL, ZURLENC
+#  - Eliminadas variables sin uso
+#######################################################################################
+
+#**
+#* Rellena los mensajes en el cuadro de la pantalla
+#*
+#* @param PZAPLICACION > Aplicación
+#* @param PZSENTIDO    > Sentido del mensaje
+#* @param PZABREV      > Abreviatura de la pantalla
+#*!
+Subprog LLENAR_REJ_MENSAJES(PZAPLICACION,PZSENTIDO,PZABREV)
+Value Char    PZAPLICACION
+Value Integer PZSENTIDO
+Value Char    PZABREV
+Local Integer FILA  : FILA=-1
+Local Integer TF
+
+If dim([M:ZIM0]ZSEL)>=0 Then
+  TF=dim([M:ZIM0]ZSEL)-1
+Else
+  TF=dim([M:ZDIA]ZSEL)-1
+Endif
+
+PZABREV="[M:"+PZABREV+"]"
+
+Gosub DEF_VAR_SQL From ZCOMUN
+F+=1 : TXT(F)="SELECT ZA.ZCODSMS_0,ZDESSMS_0 FROM ZDEFAPPD ZA "
+F+=1 : TXT(F)="INNER JOIN ZDEFSMS ZS ON ZA.ZCODSMS_0=ZS.ZCODSMS_0 "
+F+=1 : TXT(F)="WHERE ZA.ZCODAPP_0='"+func ESC_SQL(PZAPLICACION)+"' AND ZA.ZACTSMS_0=2 AND ZS.ZSENTIDO_0="+num$(PZSENTIDO)
+For (Char ZCODSMS(GLONZSMS),Char ZDESSMS(50)) From BD Sql TXT As [ZREG]
+  If FILA+2>=TF
+    Call ERREUR ("FALTAN DATOS !!!\Se ha alcanzado el máximo de"-num$(TF)-"filas en rejilla mensajes\Pida que se lo aumenten") From GESECRAN
+    Break
+  Else
+    FILA+=1
+    Assign PZABREV+"ZIDSMS(FILA)"   With [ZREG]ZCODSMS
+    Assign PZABREV+"ZDESCSMS(FILA)" With [ZREG]ZDESSMS
+  Endif
+Next
+
+Assign PZABREV+"NBLIG" With FILA+1
+End
+
+#######################################################################################
+$DEF_TBL_INT
+If PZTABLA1<>""          Then Local File =PZTABLA1    [ZCAB]     Endif
+If PZTABLA2<>""          Then Local File =PZTABLA2    [ZLIN]     Endif
+If clalev([F:ZZPIA])<=0  Then Local File ZBPSINVLIGA  [F:ZZPIA]  Endif
+Return
+
+#######################################################################################
+$DEF_TBL_STD
+If clalev([F:ZMFG])<=0  Local File MFGHEAD    [F:ZMFG] Endif
+If clalev([F:ZFCY])<=0  Local File FACILITY   [F:ZFCY] Endif
+If clalev([F:ZITM])<=0  Local File ITMMASTER  [F:ZITM] Endif
+If clalev([F:ZTUN])<=0  Local File TABUNIT    [F:ZTUN] Endif
+If clalev([F:ZTST])<=0  Local File TABSTASTO  [F:ZTST] Endif
+If clalev([F:ZMKI])<=0  Local File MFGITMTRK  [F:ZMKI] Endif
+If clalev([F:MKI])<=0   Local File MFGITMTRK  [F:MKI]  Endif
+If clalev([F:ZMKM])<=0  Local File MFGMATTRK  [F:ZMKM] Endif
+If clalev([F:MKM])<=0   Local File MFGMATTRK  [F:MKM]  Endif
+If clalev([F:ZPOH])<=0  Local File PORDER     [F:ZPOH] Endif
+If clalev([F:SMH])<=0   Local File SMVTH      [F:SMH]  Endif
+If clalev([F:SGH])<=0   Local File SCHGH      [F:SGH]  Endif
+If clalev([F:ZSGH])<=0  Local File SCHGH      [F:ZSGH] Endif
+If clalev([F:PTH])<=0   Local File PRECEIPT   [F:PTH]  Endif
+If clalev([F:ZPOQ])<=0  Local File PORDERQ    [F:ZPOQ] Endif
+If clalev([F:ZPOP])<=0  Local File PORDERP    [F:ZPOP] Endif
+If clalev([F:ZMFI])<=0  Local File MFGITM     [F:ZMFI] Endif
+If clalev([F:ZMKO])<=0  Local File MFGOPETRK  [F:ZMKO] Endif
+If clalev([F:MKO])<=0   Local File MFGOPETRK  [F:MKO]  Endif
+If clalev([F:PIH])<=0   Local File PINVOICE   [F:PIH]  Endif
+If clalev([F:ZPIH])<=0  Local File PINVOICE   [F:ZPIH] Endif
+
+Return
+
+#######################################################################################
+$DEF_VAR_CFGSMS
+Local Char    ZTABLA1(GLONATB)
+Local Char    ZTABLA2(GLONATB)
+Local Integer ZTIPOSMS
+Local Char    ZMODELO(GLONAOE)
+Local Char    ZAOB(GLONAOB)
+Local Char    ZDESSMS(50)
+Return
+
+#######################################################################################
+Subprog UPD_EST_SMS(PZTABLA,PZIDEXT,PZESTADO,PZFICHERO,PZDESCERR,PZNUM,PZNOMFILE)
+Value Char    PZTABLA, PZIDEXT
+Value Integer PZESTADO
+Value Char    PZFICHERO, PZDESCERR, PZNUM, PZNOMFILE
+Local Char    ZTRAZA(100)
+Local Char    ZRUTA(250)
+Gosub DEF_VAR_SQL From ZCOMUN
+
+If clalev([F:ZPMI])<=0 Local File APARIMPEXP [ZPMI] Endif
+
+# Comprobamos si el fichero una vez importado, en caso de OK o ERROR se mueve de carpeta
+# Se define en la parametrización de los modelos de importación
+If PZESTADO=2 Then
+  Read [F:ZPMI]APX0="REPIMPFIN"
+Else
+  Read [F:ZPMI]APX0="REPIMPERR"
+Endif
+If fstat=0 Then
+  If [F:ZPMI]DIRECTORY<>"" Then
+    ZRUTA=filpath("",ctrans(ctrans([F:ZPMI]DIRECTORY,"[",""),"]",""),"")
+    PZFICHERO=ZRUTA+"\"+PZNOMFILE+".XML"
+  Endif
+Endif
+
+If !GSERVEUR Then
+  ZTRAZA=GTRACE
+Else
+  ZTRAZA=GTRACE+".tra"
+Endif
+
+# Todos los literales se escapan: un apóstrofo en el mensaje de error rompía el UPDATE
+F+=1 : TXT(F)="UPDATE "+PZTABLA+" SET ZSTA_0="+num$(PZESTADO)
+F+=1 : TXT(F)=",ZTRAZA_0='"+func ESC_SQL(ZTRAZA)+"'"
+F+=1 : TXT(F)=",ZMSG_0='"+func ESC_SQL(PZDESCERR)+"'"
+F+=1 : TXT(F)=",ZNUM_0='"+func ESC_SQL(PZNUM)+"',UPDDATTIM_0=GETDATE()"
+F+=1 : TXT(F)=",ZINTENTOS_0=ZINTENTOS_0+1,ZFILEXML_0='"+func ESC_SQL(PZFICHERO)+"'"
+F+=1 : TXT(F)=" WHERE ZIDEXT_0='"+func ESC_SQL(PZIDEXT)+"'"
+Execsql From BD Sql TXT
+
+## En el caso que el número de ZINTENTOS sea menor a 5 y el estado de la importación sea ERRÓNEO(3), actualizamos el estado a PENDIENTE(1)
+#Raz TXT : F=-1
+#F+=1 : TXT(F)="UPDATE "+PZTABLA+" SET ZSTA_0=1,ZTRAZA_0='',ZMSG_0='',ZNUM_0='',UPDDATTIM_0=GETDATE() "
+#F+=1 : TXT(F)="WHERE ZIDEXT_0='"+func ESC_SQL(PZIDEXT)+"' AND ZINTENTOS_0<5 AND (ZSTA_0=3 OR ZSTA_0=99)"
+#Execsql From BD Sql TXT
+End
+
+#######################################################################################
+#** Proceso que extrae la información de los mensajes
+#*
+#* @param PZCODSMS > Código del mensaje
+#* @param PZDESSMS > Descripción del mensaje
+#*!
+Subprog GET_INFO_SMS(PZCODSMS,PZDESSMS)
+Value    Char PZCODSMS
+Variable Char PZDESSMS
+
+If clalev([F:ZDS])<=0 Local File ZDEFSMS [ZDS] Endif
+
+Read [F:ZDS]ZDSM0=PZCODSMS
+If fstat=0 Then
+  PZDESSMS = [F:ZDS]ZDESSMS
+Endif
+End
+
+#######################################################################################
+#** Devuelve el tipo de conexión de una aplicación
+#*
+#* @param PAPP > Código de aplicación
+#* @param PTYP > Tipo (Integer)
+#* @param PTAB > Sin uso. Se mantiene por compatibilidad con las llamadas existentes
+#*!
+Subprog GET_TIPO_CONEXION(PAPP, PTYP, PTAB)
+Value Char       PAPP
+Variable Integer PTYP
+Variable Char    PTAB
+
+Raz PTYP
+
+If clalev([F:ZDAPH])<=0   Local File ZDEFAPPH  [F:ZDAPH]  Endif
+
+Read [F:ZDAPH]ZDAPH0 = PAPP
+If !fstat
+  PTYP = [F:ZDAPH]ZTIPCON
+Endif
+End
+
+#######################################################################################
+Subprog COPIE_DEL_FILES(PATH_SALIDA,PATH_COPIA,ZRENDEL)
+Value Char    PATH_SALIDA, PATH_COPIA
+Value Integer ZRENDEL
+Local Integer ZSTAT, LNUMFIC, J
+Local Char    ORDSYS(250), FILES(250)(0..)
+Local Integer STAFILE
+
+ORDSYS = adxmac(0)+'@lsadx -t -r -n'+num$(dim(FILES)-1)+' -a '+nomap-PATH_SALIDA+' csv'
+Call DIRECTORY_LIST(FILES,ORDSYS,LNUMFIC) From ZCOMUN
+For J=0 To LNUMFIC-1
+  Call COPIE(PATH_SALIDA+FILES(J)+".csv",PATH_COPIA+FILES(J)+".csv",ZSTAT) From ORDSYS
+  If ZRENDEL=1 Then
+    STAFILE=renameFile(PATH_SALIDA+FILES(J)+".csv",PATH_SALIDA+mid$(FILES(J),instr(1,FILES(J),"_")+1,999)+".csv")
+  Else
+    ZSTAT=Delfile(PATH_SALIDA+FILES(J)+".csv")
+  Endif
+Next
+End
+
+#######################################################################################
+#**
+#* Permite la subida o la baja de ficheros
+#*
+#* @param ZMETODO      > 1-> PUT (Subir); 2-> GET (Descargar)
+#* @param PATH_PROCESO > Ruta donde se genera el fichero BAT de forma dinámica
+#* @param PATH_SALIDA  > Ruta donde se ubican los ficheros a enviar/recibir
+#* @param ZIPFTP       > IP del Host del FTP
+#* @param ZUIDFTP      > Usuario para la conexión al servidor FTP
+#* @param ZPWDFTP      > Password para la conexión al servidor FTP
+#* @param ZFLDFTP      > Carpeta del FTP tanto para entrada como para salida
+#* @param ZEXT         > Extensión de los ficheros (xml por defecto si se deja en blanco)
+#* @param ZTIPCON      > Conexión segura (1-No, 2-Sí)
+#*
+#* El script de WinSCP (.dat) se escribe directamente desde X3, sin "echo", para que
+#* los caracteres especiales de la contraseña no los interprete el intérprete de comandos.
+#* El .bat solo lanza WinSCP y borra el .dat al terminar: la contraseña no queda en disco.
+#*!
+Subprog GET_PUT_FICHEROS_FTP(ZMETODO,PATH_PROCESO,PATH_SALIDA,ZIPFTP,ZUIDFTP,ZPWDFTP,ZFLDFTP,ZEXT,ZTIPCON)
+Value Integer ZMETODO
+Value Char    PATH_PROCESO, PATH_SALIDA
+Value Char    ZIPFTP, ZUIDFTP, ZPWDFTP, ZFLDFTP, ZEXT
+Value Integer ZTIPCON
+Local Char    ZFICHDAT(250)
+Local Char    ZFICHBAT(250)
+Local Integer LNUMFIC, J, LFICMOV
+Local Char    ORDSYS(250), FILES(250)(0..), RESULT(250), ZCADCON(10)
+
+Call ECR_TRACE("*** Inicio del proceso de sincronizacion de ficheros al FTP ***",0) From GESECRAN
+
+# Validación previa: no se abre ningún fichero si el tipo de conexión no es válido
+If ZTIPCON=2
+  ZCADCON = "sftp"
+Elsif ZTIPCON=1
+  ZCADCON = "ftp"
+Else
+  Call ECR_TRACE("Tipo de conexión no válido ("+num$(ZTIPCON)+")",1) From GESECRAN
+  End
+Endif
+
+If ZEXT="" : ZEXT="xml"
+Else
+  ZEXT =  func ZCOMUN.REPLACE_T(ZEXT, ".", "")
+Endif
+
+ZFICHDAT = PATH_PROCESO+"ftpcmdxml.dat"
+ZFICHBAT = PATH_PROCESO+"copiaftp.bat"
+
+# Lista de ficheros a subir (solo PUT)
+LNUMFIC = 0
+If ZMETODO=1 Then
+  ORDSYS = adxmac(0)+'@lsadx -t -r -n'+num$(dim(FILES)-1)+' -a '+nomap-PATH_SALIDA+' '+ZEXT
+  Call DIRECTORY_LIST(FILES,ORDSYS,LNUMFIC) From ZCOMUN
+Endif
+
+#--- Script de WinSCP ------------------------------------------------------------------
+Openo ZFICHDAT,0 Using [ZDAT]
+If fstat
+  Call ECR_TRACE("No se puede crear el fichero "+ZFICHDAT,1) From GESECRAN
+  End
+Endif
+Iomode adxirs chr$(13)+chr$(10) Using [ZDAT]
+Iomode adxium 0 Using [ZDAT] #  50 = ASCII  0 = UTF8
+
+Wrseq "open "+ZCADCON+"://"+func ZURLENC(ZUIDFTP)+":"+func ZURLENC(ZPWDFTP)+"@"+ZIPFTP Using [ZDAT]
+Wrseq "cd "+ZFLDFTP Using [ZDAT]
+
+LFICMOV = 0
+If ZMETODO=1 Then
+  For J=0 To LNUMFIC-1
+    Wrseq "put "+PATH_SALIDA+FILES(J)+"."+ZEXT Using [ZDAT]
+    LFICMOV += 1
+  Next
+Else
+  Wrseq "get *."+ZEXT+" "+PATH_SALIDA Using [ZDAT]
+  Wrseq "mv *."+ZEXT+" *.tra" Using [ZDAT]   # Renombra el fichero en el servidor a .tra
+Endif
+Wrseq "exit" Using [ZDAT]
+Openo Using [ZDAT]
+
+#--- BAT: lanza WinSCP y borra el script con la contraseña ----------------------------
+Openo ZFICHBAT,0 Using [ZTXT]
+If fstat
+  Call ECR_TRACE("No se puede crear el fichero "+ZFICHBAT,1) From GESECRAN
+  End
+Endif
+Iomode adxirs chr$(13)+chr$(10) Using [ZTXT]
+Iomode adxium 50 Using [ZTXT] #  50 = ASCII  0 = UTF8
+
+Wrseq "@echo off" Using [ZTXT]
+#Por los problema tenidos con el Ftp de windows se utiliza winscp
+Wrseq '"C:\PROGRA~2\winscp\winscp.com" /script="'+ZFICHDAT+'"' Using [ZTXT]
+Wrseq 'del "'+ZFICHDAT+'"' Using [ZTXT]
+Openo Using [ZTXT]
+
+If ZMETODO=1 Then
+  Call ECR_TRACE("Se van a copiar "+num$(LFICMOV)+" archivos "+toupper(ZEXT)+".",0) From GESECRAN
+Endif
+
+### Ejecuta bat
+System RESULT=chr$(34) + ZFICHBAT + chr$(34)
+If RESULT = ''
+   Call ECR_TRACE("No se ha ejecutado correctamente el system de X3",1) From GESECRAN
+Else
+   Call ECR_TRACE("Ejecutado correctamente el system de X3",0) From GESECRAN
+Endif
+
+Sleep 3
+
+Call ECR_TRACE("*** Fin del proceso de sincronizacion de ficheros "+toupper(ZEXT)+" al FTP ***",0) From GESECRAN
+End
+
+#######################################################################################
+Funprog GET_STU_ITMREF(PZMFGNUM,PZMFGLIN,PZITMREF)
+Value Char    PZMFGNUM
+Value Integer PZMFGLIN
+Value Char    PZITMREF
+Local Char    ZRET(GLONUOM)
+
+If clalev([F:ZMM])<=0 Local File MFGMAT [ZMM] Endif
+
+Filter [F:ZMM] Where MFGNUM=PZMFGNUM and MFGLIN=PZMFGLIN and ITMREF=PZITMREF
+For [F:ZMM]
+  ZRET=[F:ZMM]STU
+  Break
+Next
+Filter [F:ZMM]
+
+End ZRET
+
+#######################################################################################
+Funprog GET_DESC_SEGUIMIENTO(PZIDEXT)
+Value Char PZIDEXT
+Local Char ZRET(250)
+
+If clalev([F:ZMOD])<=0 Local File ZMFGOPETRKD [ZMOD] Endif
+
+Read [F:ZMOD]ZMKO0(1)=PZIDEXT
+If fstat=0 Then
+  ZRET = [F:ZMOD]ROODES
+Endif
+End ZRET
+
+#######################################################################################
+Subprog UPD_SEGUIMIENTO_PREPARACION(ZMFGNUM,ZTRKNUM)
+Value Char ZMFGNUM,ZTRKNUM
+Gosub DEF_VAR_SQL From ZCOMUN
+Execsql From BD Sql "UPDATE ZPREPH SET MFGTRKNUM_0='"+func ESC_SQL(ZTRKNUM)+"' WHERE MFGNUM_0='"+func ESC_SQL(ZMFGNUM)+"' AND MFGTRKNUM_0='' AND ZSTA_0=2"
+End
+
+#######################################################################################
+#**
+#* Funcion para recuperar el valor de un parametro dado de una App
+#*
+#* @param PAPP     : Aplicacion
+#* @param PPARAM   : Parametro a buscar su valor
+#*!
+Funprog GET_PARAM_VAL_APP(PAPP, PPARAM)
+Value Char PAPP()
+Value Char PPARAM()
+Local Char    LVALOR(255)
+Local Integer I
+Local Integer ZABIERTA
+
+# Solo se cierra al final si la abre esta función
+If clalev([F:ZDAH])<=0
+  Local File ZDEFAPPH [F:ZDAH]
+  ZABIERTA = 1
+Endif
+
+Read [F:ZDAH]ZDAPH0 = PAPP
+If fstat=0
+  For I = 0 To dim([F:ZDAH]ZTOKPAR)-1
+    If [F:ZDAH]ZTOKPAR(I) = ''
+      Break
+    Endif
+    If [F:ZDAH]ZTOKPAR(I) = PPARAM
+      LVALOR = [F:ZDAH]ZTOKVAL(I)
+      Break
+    Endif
+  Next
+Endif
+
+If ZABIERTA : Close Local File [F:ZDAH] : Endif
+End LVALOR
+
+##########################################################################################
+#**
+#* Funcion para recuperar el valor de un parametro dado de un Mensaje
+#*
+#* @param PMSG     : Id Mensaje
+#* @param PPARAM   : Parametro a buscar su valor
+#*!
+Funprog GET_HEADER_VAL_MSG(PMSG, PPARAM)
+Value Char PMSG()
+Value Char PPARAM()
+Local Char    LVALOR(255)
+Local Integer I
+Local Integer ZABIERTA
+
+# Solo se cierra al final si la abre esta función
+If clalev([F:ZDS])<=0
+  Local File ZDEFSMS [F:ZDS]
+  ZABIERTA = 1
+Endif
+
+Read [F:ZDS]ZDSM0 = PMSG
+If fstat=0
+  For I = 0 To dim([F:ZDS]ZHEADPAR)-1
+    If [F:ZDS]ZHEADPAR(I) = ''
+      Break
+    Endif
+    If [F:ZDS]ZHEADPAR(I) = PPARAM
+      LVALOR = [F:ZDS]ZHEADVAL(I)
+      Break
+    Endif
+  Next
+Endif
+
+If ZABIERTA : Close Local File [F:ZDS] : Endif
+End LVALOR
+
+#######################################################################################
+#**
+#* Obtiene el valor de un campo dada una tabla de tipo texto
+#*
+#* ATENCIÓN: PWHERE se concatena tal cual en la SQL. Los valores literales que incluya
+#* el llamante deben escaparse con func ZINTLIB.ESC_SQL(...)
+#*
+#* @param PTBL     > Tabla
+#* @param PFLD     > Campo
+#* @param PWHERE   > Clausula Where
+#*!
+Funprog GET_FIELD_VALUE_TBL(PTBL,PFLD,PWHERE)
+Value Char    PTBL
+Value Char    PFLD
+Value Char    PWHERE
+Local Char    ZRET(250)
+
+Gosub DEF_VAR_SQL From ZCOMUN
+F+=1 : TXT(F)="SELECT "+PFLD+" FROM "+PTBL+" "+PWHERE
+For (Char ZVALUE(250)) From BD Sql TXT As [ZCNS]
+  ZRET = [ZCNS]ZVALUE
+Next
+
+End ZRET
+
+#######################################################################################
+#**
+#* Inserta/actualiza un registro en la tabla ZINTOBJ para la App, Objeto e IdX3
+#*
+#* @param PZCODAPP - App
+#* @param PZCODSMS - Id Mensaje
+#* @param PZOBJ    - Objeto
+#* @param PZIDX3   - Id X3
+#* @param PZIDEXT  - Id externo
+#* @param PZIDENL  - Enlace con registro externo
+#* @param PZPROP   - Array de propiedades
+#*!
+Subprog CRE_UPD_REGISTRO_ZINTOBJ(PZCODAPP,PZCODSMS,PZOBJ,PZIDX3,PZIDEXT,PZIDENL,PZPROP)
+Value Char PZCODAPP()
+Value Char PZCODSMS()
+Value Char PZOBJ()
+Value Char PZIDX3()
+Value Char PZIDEXT()
+Value Char PZIDENL
+Value Char PZPROP()(1..10)
+Local Integer I
+Local Integer IF_TRANS
+Local Integer ZSTAT
+
+If clalev([F:ZIOJ])<=0  Local File ZINTOBJ   [ZIOJ] Endif
+
+# Si ya hay una transacción abierta, la gestiona el llamante
+If adxlog
+  IF_TRANS = 1
+Else
+  Trbegin [F:ZIOJ]
+  IF_TRANS = 0
+Endif
+
+Readlock [F:ZIOJ]ZIOJ0 = PZCODAPP;PZOBJ;PZIDX3
+ZSTAT = fstat
+
+If ZSTAT = 1   # Registro bloqueado por otro usuario
+  If IF_TRANS = 0 : Rollback : Endif
+  GMESSAGE = "Registro bloqueado en la tabla ZINTOBJ"
+  Call ECR_TRACE("App = "+PZCODAPP+" // Objeto = "+PZOBJ+" // Id X3:"+PZIDX3+" // IdRegExt:"+PZIDEXT+" ~"+GMESSAGE,1) From GESECRAN
+  End
+Endif
+
+If ZSTAT = 0  # Existe el registro, se actualiza
+  [F:ZIOJ]ZIDEXT     = PZIDEXT
+  [F:ZIOJ]ZIDENL     = PZIDENL
+  [F:ZIOJ]ZCODSMS    = PZCODSMS
+  [F:ZIOJ]ZFECHORSMS = num$(datetime$)
+  For I = 0 To 9  #Recorremos las 10 propiedades
+    [F:ZIOJ]ZPROP(I) = PZPROP(I+1)
+  Next
+  Rewrite [F:ZIOJ]
+
+Else  # No existe, se inserta
+  Raz [F:ZIOJ]
+  [F:ZIOJ]ZCODAPP    = PZCODAPP
+  [F:ZIOJ]ZOBJETO    = PZOBJ
+  [F:ZIOJ]ZIDX3      = PZIDX3
+  [F:ZIOJ]ZIDEXT     = PZIDEXT
+  [F:ZIOJ]ZIDENL     = PZIDENL
+  [F:ZIOJ]ZCODSMS    = PZCODSMS
+  [F:ZIOJ]ZFECHORSMS = num$(datetime$)
+  For I = 0 To 9  #Recorremos las 10 propiedades
+    [F:ZIOJ]ZPROP(I) = PZPROP(I+1)
+  Next
+  Write [F:ZIOJ]
+Endif
+
+If fstat Then
+  GMESSAGE="No se pudo crear/actualizar el registro en la tabla ZINTOBJ (fstat="+num$(fstat)+")"
+  If IF_TRANS = 0 : Rollback : Endif
+  Call ECR_TRACE("App = "+PZCODAPP+" // Objeto = "+PZOBJ+" // Id X3:"+PZIDX3+" // IdRegExt:"+PZIDEXT+" ~"+GMESSAGE,1) From GESECRAN
+  End
+Endif
+
+If IF_TRANS = 0 : Commit : Endif
+End
+
+#######################################################################################
+#**
+#* Eliminar un registro de ZINTOBJ al eliminar su registro principal de X3
+#*
+#* @param PZIDX3  : Id X3
+#* @param PGABREV : Abreviatura del objeto X3 (se usa también como filtro de ZOBJETO)
+#*!
+Subprog DEL_REGISTRO_ZINTOBJ(PZIDX3,PGABREV)
+Value Char PZIDX3, PGABREV
+
+If PGABREV="BIS" Then
+  If clalev([F:Z2])<=0 Local File PINVOICE [Z2] Endif
+
+  Read [F:Z2]PIH0=PZIDX3
+  If fstat=0 Then End Endif
+Endif
+
+Gosub DEF_VAR_SQL From ZCOMUN
+# Se filtra también por objeto: el mismo Id X3 puede existir en objetos distintos
+F+=1 : TXT(F)="DELETE ZINTOBJ WHERE ZIDX3_0='"+func ESC_SQL(PZIDX3)+"'"
+If PGABREV<>""
+  F+=1 : TXT(F)=" AND ZOBJETO_0='"+func ESC_SQL(PGABREV)+"'"
+Endif
+Execsql From BD Sql TXT
+End
+
+#######################################################################################
+#**
+#* Subprog para hacer llamada a WS externo con EXEC_HTTP
+#*
+#* @param HEADERCOD   : Parametros cabecera
+#* @param HEADERVAL   : Valores parametros cabecera
+#* @param CDATA       : Parametros adicionales del Body
+#* @param RESDATA     : Resultado Json Header y Body
+#* @param STATUSCODE  : Valor estado del resultado
+#*!
+Subprog GET_WS_HTTP(HEADERCOD, HEADERVAL, CDATA, RESDATA, STATUSCODE)
+Value Char HEADERCOD()(1..10)
+Value Char HEADERVAL()(1..10)
+Value Clbfile CDATA()
+Variable Clbfile RESDATA()(1..2)
+Variable Integer STATUSCODE
+Local Clbfile RESHEAD(0)
+Local Clbfile RESBODY(0)
+
+Raz RESDATA
+Raz STATUSCODE
+
+STATUSCODE = func ASYRWEBSER.EXEC_HTTP(HEADERCOD, HEADERVAL, CDATA, RESHEAD, RESBODY)
+RESDATA(1)=RESHEAD
+RESDATA(2)=RESBODY
+End
+
+#######################################################################################
+# ZADDJSON - Añade TXT a CLB escapado como valor string JSON
+# CLB : Clbfile destino (por referencia)
+# TXT : texto a escapar (máx. 250 caracteres)
+#######################################################################################
+Subprog ZADDJSON(CLB, TXT)
+Variable Clbfile CLB()
+Value    Char    TXT()
+Local Integer I, L, A
+
+L = len(TXT)
+For I = 1 To L
+  A = ascii(mid$(TXT, I, 1))
+  Case A
+    When 34 : CLB += '\"'        : # comilla doble
+    When 92 : CLB += '\\'        : # barra invertida
+    When 13 : CLB += '\r'        : # retorno de carro
+    When 10 : CLB += '\n'        : # salto de línea
+    When 9  : CLB += '\t'        : # tabulador
+    When Default : CLB += mid$(TXT, I, 1)
+  Endcase
+Next I
+End
+
+#######################################################################################
+#**
+#* Escapa un literal para concatenarlo en una SQL: duplica los apóstrofos
+#*
+#* @param PTXT : Texto a escapar
+#*!
+Funprog ESC_SQL(PTXT)
+Value Char PTXT()
+Local Char    ZRET(250)
+Local Integer P, Q
+
+P = 1
+Q = instr(P, PTXT, "'")
+While Q > 0
+  # El tramo termina en el apóstrofo, así no se pierden espacios intermedios
+  ZRET = ZRET + mid$(PTXT, P, Q-P+1) + "'"
+  P = Q + 1
+  Q = instr(P, PTXT, "'")
+Wend
+ZRET = ZRET + mid$(PTXT, P, len(PTXT)-P+1)
+End ZRET
+
+#######################################################################################
+#**
+#* Codifica un texto para usarlo dentro de una URL (usuario/contraseña de WinSCP)
+#* Deja sin codificar A-Z a-z 0-9 - . _ ~
+#*
+#* @param PTXT : Texto a codificar
+#*!
+Funprog ZURLENC(PTXT)
+Value Char PTXT()
+Local Char    ZRET(250)
+Local Char    ZHEX(16) : ZHEX = "0123456789ABCDEF"
+Local Integer I, A
+
+For I = 1 To len(PTXT)
+  A = ascii(mid$(PTXT, I, 1))
+  If (A>=48 and A<=57) or (A>=65 and A<=90) or (A>=97 and A<=122) or A=45 or A=46 or A=95 or A=126
+    ZRET = ZRET + mid$(PTXT, I, 1)
+  Else
+    ZRET = ZRET + "%" + mid$(ZHEX, int(A/16)+1, 1) + mid$(ZHEX, mod(A,16)+1, 1)
+  Endif
+Next I
+End ZRET
+
+#######################################################################################
+#**
+#* Actualiza el valor de un parámetro general de X3 (tabla ADOVAL, campo VALEUR)
+#*
+#* Solo actualiza si el parámetro tiene un único registro en ADOVAL. Si está definido
+#* en varios niveles (carpeta/sociedad/planta) no se modifica nada, para no pisar
+#* valores de otro nivel.
+#*
+#* @param PZPARAM : Código del parámetro
+#* @param PZVALOR : Nuevo valor (alfanumérico, máx. 250 caracteres)
+#* @return 0 = actualizado / 1 = el parámetro no existe / 2 = definido en varios niveles
+#*!
+Funprog UPD_PARAM_ADOVAL(PZPARAM, PZVALOR)
+Value Char PZPARAM()
+Value Char PZVALOR()
+Local Integer ZNREG
+
+Gosub DEF_VAR_SQL From ZCOMUN
+
+# Número de registros del parámetro en ADOVAL
+F+=1 : TXT(F)="SELECT COUNT(*) FROM ADOVAL WHERE PARAM_0='"+func ESC_SQL(PZPARAM)+"'"
+For (Integer ZCNT) From BD Sql TXT As [ZADV]
+  ZNREG = [ZADV]ZCNT
+Next
+
+If ZNREG = 0
+  Call ECR_TRACE("Parámetro "+PZPARAM+": no existe en ADOVAL, no se actualiza",1) From GESECRAN
+  End 1
+Endif
+
+If ZNREG > 1
+  Call ECR_TRACE("Parámetro "+PZPARAM+": definido en "+num$(ZNREG)+" niveles, no se actualiza",1) From GESECRAN
+  End 2
+Endif
+
+# Actualización del valor
+Raz TXT : F=-1
+F+=1 : TXT(F)="UPDATE ADOVAL SET VALEUR_0='"+func ESC_SQL(PZVALOR)+"'"
+F+=1 : TXT(F)=" WHERE PARAM_0='"+func ESC_SQL(PZPARAM)+"'"
+Execsql From BD Sql TXT
+
+Call ECR_TRACE("Parámetro "+PZPARAM+" actualizado con el valor: "+PZVALOR,0) From GESECRAN
+End 0

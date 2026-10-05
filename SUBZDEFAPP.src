@@ -1,0 +1,161 @@
+#<AdxTL>@(#)0.0.0.0 $Revision$
+#######################################################################################
+# Fuente.....: SUBZDEFAPP  -  Definición de aplicaciones
+#--------------------------------------------------------------------------------------
+#######################################################################################
+
+#######################################################################################
+#      A C C I O N E S
+#######################################################################################
+$ACTION
+Case ACTION
+  When "OUVRE"         : Gosub OUVRE
+  When "DEFLIG"        : Gosub DEFLIG
+  When "LIENS"         : Gosub LIENS
+  When "INICRE_LIG"    : Gosub INICRE_LIG
+  When "INIMOD_LIG"    : Gosub INIMOD_LIG
+  When "CREATION"      : Gosub CREATION
+  When "ANNULE"        : Gosub ANNULE
+  When "MODIF"         : Gosub MODIF
+  When "APRES_MOD"     : Gosub APRES_MOD
+  When "APRES_CRE"     : Gosub APRES_CRE
+  When "RAZDUP"        : Gosub RAZDUP
+  When "RAZCRE"        : Gosub RAZCRE
+  When "EXEBOUT"       : Gosub EXEBOUT
+  When "LIENS_LIG"     : Gosub LIENS_LIG
+  When "SETBOUT"       : Gosub SETBOUT
+Endcase
+Return
+
+#######################################################################################
+$OUVRE
+Gosub DECLARE From TABLEAUX
+Return
+
+#######################################################################################
+$DEFLIG
+Default Mask [ZDAP1]
+Default File [ZDAPD]
+CRIT   = '[F:ZDAPD]ZCODAPP=[M:ZDAP0]ZCODAPP'           # Definir enlace para sacar lineas del documento indicado en pantalla
+FICLIG = "ZDEFAPPD"
+ABLIG  = "ZDAPD"
+ZONLIG = "ZNLIN"
+Return
+
+#######################################################################################
+$LIENS
+Gosub LIENS From TABLEAUX
+Call AM_ZTIPCON([M:ZDAP2]ZTIPCON) From SPEZDEFAPP
+Gosub LEER_PARAMETROS
+Return
+
+#######################################################################################
+$INIMOD_LIG
+Gosub INI_LIG
+Return
+
+#######################################################################################
+$INICRE_LIG
+Gosub INI_LIG
+Return
+
+#######################################################################################
+$CREATION
+Gosub CREATION From TABLEAUX
+If GOK < 1 : Return : Endif
+Return
+
+
+#######################################################################################
+$ANNULE
+Gosub ANNULE From TABLEAUX
+If GOK < 1 : Return : Endif
+Return
+
+#######################################################################################
+$MODIF
+Gosub MODIF From TABLEAUX
+If GOK < 1 : Return : Endif
+Return
+
+#######################################################################################
+$APRES_MOD
+Gosub LIENS From TABLEAUX
+Return
+
+#######################################################################################
+$APRES_CRE
+Gosub LIENS From TABLEAUX
+If GOK < 1 : Return : Endif
+Return
+
+#######################################################################################
+$EXEBOUT
+Return
+
+#######################################################################################
+$RAZDUP
+Return
+
+#######################################################################################
+$RAZCRE
+Call SET_VISINV(0) From SPEZDEFAPP
+[M:ZDAP2]ZTIPCON=1
+[M:ZDAP2]ZTIPLLA=1
+[M:ZDAP2]ZMODTXT=1
+
+Affzo [M:ZDAP2]ZTIPCON
+Affzo [M:ZDAP2]ZTIPLLA
+Affzo [M:ZDAP2]ZMODTXT
+
+Call AM_ZTIPCON([M:ZDAP2]ZTIPCON) From SPEZDEFAPP
+Return
+
+#######################################################################################
+$INI_LIG
+[F:ZDAPD]ZCODAPP = [M:ZDAP0]ZCODAPP
+Return
+
+#######################################################################################
+LIENS_LIG
+Gosub DEF_VAR_CFGSMS From ZINTLIB
+Call GET_INFO_SMS([ZDAP1]ZCODSMS(nolign-1),ZDESSMS) From ZINTLIB
+[ZDAP1]ZDESSMS(nolign-1)=ZDESSMS
+Affzo [ZDAP1]ZDESSMS
+Return
+
+#######################################################################################
+$SETBOUT
+Return
+
+#######################################################################################
+#      S U B R U T I N A S
+#######################################################################################
+$ASIGNAR_PARAMETROS
+Local Integer ZN
+For ZN=0 To [M:ZDAP2]NBTOK-1
+  [F:ZDAPH]ZTOKPAR(ZN)=[M:ZDAP2]ZTOKPAR(ZN)
+  [F:ZDAPH]ZTOKVAL(ZN)=[M:ZDAP2]ZTOKVAL(ZN)
+Next
+Return
+
+#######################################################################################
+$LEER_PARAMETROS
+Raz [M:ZDAP2]NBTOK
+Local Integer ZN
+
+For ZN = 0 To dim([F:ZDAPH]ZTOKPAR)-1
+  If [F:ZDAPH]ZTOKPAR(ZN) <> ''
+    [M:ZDAP2]ZTOKPAR(ZN) = [F:ZDAPH]ZTOKPAR(ZN)
+    [M:ZDAP2]ZTOKVAL(ZN) = [F:ZDAPH]ZTOKVAL(ZN)
+  Else
+    Break
+  Endif
+Next
+[M:ZDAP2]NBTOK = ZN
+Affzo [M:ZDAP2]1-99
+Return
+
+#######################################################################################
+#      A C C I O N E S   D E   C A M PO
+#######################################################################################

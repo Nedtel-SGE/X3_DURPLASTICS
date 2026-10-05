@@ -1,0 +1,777 @@
+#<AdxTL>@(#)0.0.0.0 $Revision$
+#######################################################################################
+# Fuente.....: ZINTMON  -  Consulta de mensajes interfaz X3
+#######################################################################################
+
+#######################################################################################
+#      A C C I O N E S
+#######################################################################################
+$ACTION
+Case ACTION
+  When "OUVRE"         Gosub  OUVRE
+  When "SETBOUT"       Gosub  SETBOUT
+  When "DEBUT"         Gosub  DEBUT
+  When "BOUTON"        Gosub  BOUTON
+Endcase
+Return
+
+#######################################################################################
+$OUVRE
+Local Integer V
+If clalev([F:ZDFS])<=0  Local File ZDEFSMS   [F:ZDFS] Endif
+Return
+
+#######################################################################################
+$SETBOUT
+# Deshabilitamos el botón de PROCESAR en el caso que:
+# No hayan mensajes
+# No hayan líneas en la pestaña de resultados
+# El estado sea distinto a PEDIENTE / PROCESADO ERROR
+If !find([M:ZIM0]ZESTADO,1,3) or [M:ZIM0]NBLIG<=0 or [M:ZIM0]ZSENTIDO=2 or [M:ZIM1]NBLIG<=0
+  If instr(1,CHMEN,"P")>0
+    CHMEN=func ZCOMUN.REPLACE(CHMEN,"P","",-1,V)
+  Endif
+Else
+  If instr(1,CHMEN,"P")<1
+    CHMEN+="P"
+  Endif
+Endif
+Return
+
+#######################################################################################
+$DEBUT
+[M:ZIM0]ZESTADO=3 # Por defecto siempre mostrar mensajes con error
+Affzo [M:ZIM0]ZESTADO
+Call COLOR_ESTADO([M:ZIM0]ZESTADO)
+[M:ZIM0]ZSENTIDO=2
+#[M:ZIM0]ZAPLICACION="PDA"
+Affzo [M:ZIM0]ZSENTIDO
+Affzo [M:ZIM0]ZAPLICACION
+Call AM_ZSENTIDO([M:ZIM0]ZSENTIDO)
+Return
+
+#######################################################################################
+$BOUTON
+Case BOUT
+  When "B"     Call BUSCAR
+  When "P"     Call PROCESAR
+Endcase
+Return
+
+#######################################################################################
+#      R U T I N A S
+#######################################################################################
+Subprog COLOR_ESTADO(ZESTADO)
+Value Integer ZESTADO
+Case ZESTADO
+  When 1       Chgstl [M:ZIM0]ZESTADO With "BACKYELLOW"
+  When 2       Chgstl [M:ZIM0]ZESTADO With "BACKGREEN"
+  When 3       Chgstl [M:ZIM0]ZESTADO With "BACKRED"
+  When 4       Chgstl [M:ZIM0]ZESTADO With "BACKGREY"
+  When Default Chgstl [M:ZIM0]ZESTADO With ""
+Endcase
+End
+
+#######################################################################################
+Subprog BUSCAR
+Local Integer NSMS
+
+# Llamamos al proceso que alimenta la información en función del tipo de conexión y del sentido
+For NSMS=0 To [M:ZIM0]NBLIG-1
+  If [M:ZIM0]ZSEL(NSMS)=2 Then
+    Call ALIMENTAR([M:ZIM0]ZAPLICACION,[M:ZIM0]ZIDSMS(NSMS))
+
+    If GMESSAGE<>"" Then
+      Call ERREURT(GMESSAGE,1) From GESECRAN
+      Raz GMESSAGE
+    Endif
+  Endif
+Next
+
+Call MOSTRAR
+End
+
+#######################################################################################
+Subprog MOSTRAR
+Local Integer TF      :  TF=dim([M:ZIM1]ZIDEXT)-1
+Local Integer OK      :  OK=1
+Local Integer F       :  F=-1
+Local Integer M
+Local Char    TXT(250)(15)
+Local Char    MSG(250)
+Local Char    ZIDSMS(GLONADI)
+Local Integer NSMS
+Local Char    ZFROM(30)
+Local Integer ZFILA
+Local Char    ZDESCRIPCION(250)
+Local Char    ZFIESPE(250) # Campos específicos en la query en función del mensaje
+If clalev([F:ZDS])<=0  Local File ZDEFSMS  [F:ZDS] Endif
+
+Call VACIAR_REJILLA
+Gosub BUSCAR_VALIDAR # Comprobamos si se puede realizar la búsqueda
+For NSMS=0 To [M:ZIM0]NBLIG-1
+  If [M:ZIM0]ZSEL(NSMS)=2 Then
+    ZIDSMS=[M:ZIM0]ZIDSMS(NSMS)
+
+    # Abrimos la tabla con la definición del mensaje
+    Read [F:ZDS]=ZIDSMS
+    If fstat<>0 Then
+      Call ERREURT("Definición no encontrada para el mensaje:"-ZIDSMS,1) From GESECRAN
+      End
+    Endif
+
+    Gosub BUSCAR_SQL  # Montamos la SQL
+    Gosub BUSCAR_MOSTRAR # Mostramos la información en el grid
+    If WERR=1 Then End Endif
+  Endif
+Next
+End
+
+#######################################################################################
+Subprog ALIMENTAR(PZAPP,PZSMS)
+Value Char PZAPP
+Value Char PZSMS
+
+If clalev([F:ZDAH])<=0  Local File ZDEFAPPH  [F:ZDAH] Endif
+If clalev([F:ZDFS])<=0  Local File ZDEFSMS   [F:ZDFS] Endif
+If clalev([F:ZDAP])<=0  Local File ZDEFAPPD  [F:ZDAP] Endif
+
+# Abrimos la tabla con la definición de la aplicación
+Read [F:ZDAH]ZDAPH0=PZAPP
+If fstat<>0 Then
+  GMESSAGE="Proceso de volcado de información: Aplicación"-PZAPP-"no definida"
+  End
+Endif
+
+# Abrimos la tabla con la definición del mensaje
+Read [F:ZDFS]ZDSM0=PZSMS
+If fstat<>0 Then
+  GMESSAGE="Proceso de volcado de información: Mensaje"-PZSMS-"no definido"
+  End
+Endif
+
+Read [F:ZDAP]ZDAPD0 = PZAPP;PZSMS
+If fstat<>0 Then
+  GMESSAGE="Proceso de volcado de información: Detalles de aplicación"-PZAPP-"no definidos"
+  End
+Endif
+
+# Comprobar el tipo de conexión
+If [F:ZDFS]ZSENTIDO = 2 # Sentido EXT->X3
+  Case [F:ZDAH]ZTIPCON
+    When 1 : Gosub VOLCADO_BD
+    When 2 : Gosub VOLCADO_WS
+    When 3 : Gosub VOLCADO_FICH
+    When Default
+  Endcase
+Else
+  Case [F:ZDAH]ZTIPCON
+    When 1 : Gosub ENVIO_BD
+    When 2 : Gosub ENVIO_WS
+    When 3 : Gosub ENVIO_FICH
+    When Default
+  Endcase
+Endif
+End
+
+#######################################################################################
+$VOLCADO_BD
+If [F:ZDFS]ZATBEXT="" Then Return Endif
+If [F:ZDFS]ZATBCAB<>"" Then Local File =[F:ZDFS]ZATBCAB [ZCAB] Endif
+If [F:ZDFS]ZATBLIN<>"" Then Local File =[F:ZDFS]ZATBLIN [ZLIN] Endif
+Local File =[F:ZDFS]ZATBEXT [ZEXT]
+Local Integer IF_TRANS
+
+GOK=1
+Trbegin [ZCAB], [ZLIN]
+
+Filter [F:ZEXT] Where ZSTA=1
+For [F:ZEXT]
+  # JLPAL 05.01.26 Habría que condicionarlo a [F:ZDFS]ZATBCAB<>"" ?
+  Read [F:ZCAB]=[F:ZEXT]ZIDEXT
+  If fstat<>0 Then # JLPAL 05.01.26 Habría que avisar de que ya se recibió ese ZIDEXT ?
+    Raz [F:ZCAB]
+    [F:ZCAB]=[F:ZEXT]
+    GPE = 0
+    GPOINT = "WRIBDCABEXX3" : Gosub ENTREE From EXEFNC
+    If GPE : GOK=0 : Return : Endif
+    Write [F:ZCAB]
+    If fstat<>0 Then
+      Call FSTA("ZCAB") From GLOCK
+      GOK=0
+    Endif
+  Endif
+  # JLPAL 05.01.26 Donde está el read de [F:ZLIN] ?. Ademas habría que condicionarlo a [F:ZDFS]ZATBLIN<>"" al igual que CAB ?
+  Raz [F:ZLIN]
+  [F:ZLIN]=[F:ZEXT]
+  GPE = 0
+  GPOINT = "WRIBDLINEXX3" : Gosub ENTREE From EXEFNC
+  If GPE : GOK=0 : Return : Endif
+  Write [F:ZLIN]
+  If fstat<>0 Then
+    Call FSTA("ZLIN") From GLOCK
+    GOK=0
+  Endif
+  [F:ZEXT]ZSTA=2
+  Rewrite [F:ZEXT]
+  If fstat<>0 Then
+    Call FSTA("ZEXT") From GLOCK
+  Endif
+Next
+Filter [F:ZEXT]
+If GOK=1 Then
+  Commit
+Else
+  GOK=1
+  Rollback
+  Return
+Endif
+Return
+
+#######################################################################################
+$VOLCADO_WS
+GPOINT = "VOLCADOWS" : Gosub ENTREE From EXEFNC
+Return
+
+#######################################################################################
+$VOLCADO_FICH
+Local Char FILES (250)(0..), ZEXT(5), ZFILENAM(50), ZFOLDER(250), ZBAT(250)
+Local Char DAT(250)(300), ZMSG(250), FICHSRV(250), ZFLDERR(30), ZFLDPRO(30), ZNUM(50)
+Local Integer NUMFILE, ZEXISTE, R, G, ZSTAT
+
+Call CHECK_DIR([F:ZDAH]ZMODTXT)
+
+If [F:ZDAH]ZMODTXT=2 # Solo FTP
+  If [F:ZDAH]ZHOST="" or [F:ZDAH]ZUIDCON="" or [F:ZDAH]ZPWDCON="" or [F:ZDAH]ZFLDFTP=""
+    GMESSAGE = "Proceso de volcado de información: Revise los parámetros de conexión FTP"
+  Endif
+Endif
+If GMESSAGE <> ""
+  # TO-DO - Mostrar error
+  Return
+Endif
+
+If [F:ZDAP]ZRAIZFILE="" Then
+  GMESSAGE = "Proceso de volcado de información: No se ha establecido una raíz de fichero para el mensaje"-PZSMS-"de la aplicación"-PZAPP
+  Return
+Endif
+
+# Set variables proceso
+ZFOLDER  = [F:ZDAH]ZFLDLOCAL + [F:ZDAP]ZSUBFLD
+ZEXT     = ".csv"
+ZFILENAM = '"'+[F:ZDAP]ZRAIZFILE+"*"+ZEXT+'"'           # "RAIZ*.csv" - comillas obligatorias
+ZFLDPRO  = [F:ZDAH]ZFLDPRO
+ZFLDERR  = [F:ZDAH]ZFLDERR
+
+# FTP - Descarga ficheros
+If [F:ZDAH]ZMODTXT=2
+  Call GET_PUT_FICHEROS_FTP(2,filpath("","","")+"\TMP\",ZFOLDER+"\",[F:ZDAH]ZHOST,[F:ZDAH]ZUIDCON,[F:ZDAH]ZPWDCON,[F:ZDAH]ZHOST+[F:ZDAH]ZFLDFTP,ZEXT) From ZINTLIB
+Endif
+
+# Get ficheros
+ZBAT = "lsadx"-ZFOLDER-ZFILENAM
+Call SYSTEME2(adxmac(0),ZBAT,"",NUMFILE,FILES) From ORDSYS
+
+#Tablas de volcado
+If [F:ZDFS]ZATBCAB<>"" Then Local File =[F:ZDFS]ZATBCAB [ZCAB] Endif
+If [F:ZDFS]ZATBLIN<>"" Then Local File =[F:ZDFS]ZATBLIN [ZLIN] Endif
+
+For I=0 To NUMFILE-1
+  GOK=1
+  If clalev([ZLIN])
+    Trbegin [ZCAB], [ZLIN]
+  Else
+     Trbegin [ZCAB]
+  Endif
+
+  # Abrir fichero
+  FICHSRV = ZFOLDER+"\"+FILES(I)
+  Openi FICHSRV Using [XFO]
+  Iomode adxifs  ";"  Using [XFO]
+  Iomode adxirs  chr$(13)+chr$(10)  Using [XFO]
+  Iomode adxium 50 Using [XFO]    #  50 = ASCII   0 = UTF8
+
+  # Leer
+  Repeat
+    Rdseq DAT Using [XFO]
+    If fstat  Break  Endif
+    For G=0 To dim(DAT)-1
+      DAT(G)=vireblc(DAT(G),2)
+    Next
+    R+=1
+
+    # TO-DO - Control de cabeceras/columnas -> mover al punto de entrada
+
+   # Volcar en tabla
+    Raz [F:ZCAB]
+
+    # Gestionar contador
+    Call NUMERO("ZPSCL", "", date$, "", ZNUM, ZSTAT) From SUBANM
+    [F:ZCAB]ZNUM =   ZNUM
+    [F:ZCAB]ZIDEXT = ZNUM
+
+    GPE = 0
+    GPOINT = "WRIFILE" : Gosub ENTREE From EXEFNC
+    If GPE : GOK=0 : Return : Endif
+
+    Write [F:ZCAB]
+    If fstat<>0 Then
+      Call FSTA("ZCAB") From GLOCK
+      GOK=0
+    Endif
+  Until 1<>1
+  Openi Using [XFO]
+
+  # Mover ficheros
+  If GOK=1 and [F:ZDAH]ZFLDPRO<>""
+    Call MOVE (FICHSRV, ZFOLDER+ZFLDPRO, ZSTAT) From ORDSYS
+    # TO-DO - Añadir fecha al nombre del archivo después de moverlo
+#    ZNEWNOM = func ZCOMUN.REPLACE_T(ZFILES(I), ZEXT, "_"+format$("DD[-]MM[-]YYYY[_]hhmmss", datetime$)+ZEXT)
+#    ZSTAT   = renameFile(ZFOLDER+ZFLDPRO+ZFILES(I), ZFOLDER+ZFLDPRO+ZNEWNOM)
+  Elsif GOK=0 and [F:ZDAH]ZFLDERR<>""
+    Call MOVE (FICHSRV, ZFOLDER+ZFLDERR, ZSTAT) From ORDSYS
+  Endif
+
+  If GOK=1 Then
+    Commit
+  Else
+    GOK=1
+    Rollback
+    Return
+  Endif
+Next
+Return
+
+
+#######################################################################################
+$ENVIO_BD
+Return
+
+
+#######################################################################################
+$ENVIO_WS
+GPOINT = "ENVIOWS" : Gosub ENTREE From EXEFNC
+Return
+
+
+#######################################################################################
+$ENVIO_FICH
+Local Char    ZEXT(5), ZFILENAM(50), ZFOLDER(250), ZBAT(250), ZFLDERR(30), ZFLDPRO(30)
+Local Clbfile ZCABTXT
+Local Integer ZNEXP # Variable que guarda el nº de registro exportados
+# Abrir vista del mensaje
+If [F:ZDFS]ZVISTA<>"" Then Local File =[F:ZDFS]ZVISTA [ZVIS] Endif
+If clalev([F:ZDVW])<=0     Local File ZZFLDVW         [ZDVW] Endif # Vista que devuelve los campos y descripciones de cualquier vista. Solo español
+
+# Set variables directorio
+ZFOLDER  = [F:ZDAH]ZFLDLOCAL # + [F:ZDAP]ZSUBFLD
+ZEXT     = ".csv"
+ZFILENAM = '"'+[F:ZDAP]ZRAIZFILE+"*"+ZEXT+'"'           # "RAIZ*.csv" - comillas obligatorias
+ZFLDPRO  = [F:ZDAH]ZFLDPRO
+ZFLDERR  = [F:ZDAH]ZFLDERR
+
+# Generar fichero (solo csv)
+Local Char CPATH(250) : CPATH = ZFOLDER
+Local Char CFILE(250) : CFILE = [F:ZDAP]ZRAIZFILE+"_"+num$(timestamp$)
+
+# Parámetros CSV
+adxirs = ""                                  # Salto de línea. Lo dejamos en blanco para poder construir nuestro fichero campo a campo
+adxifs = ";"                                 # Separación entre campos
+adxium = 0                                   # Formato 0=UTF-8 | 50=ASCII
+Openo CPATH + CFILE + ".csv"    Using [ZFIL] # Abrimos el fichero
+Openo CPATH + CFILE + ".csv", 0 Using [ZFIL] # Abrimos de nuevo el fichero para dejar el contenido a 0
+
+Call ECR_TRACE("Mensaje:"-[F:ZDFS]ZDESSMS,0) From GESECRAN
+Call ECR_TRACE("Generando fichero:"-ctrans(CFILE,"\","/"),0) From GESECRAN
+
+# Punto de entrada para la generación del fichero
+GPE = 0
+GPOINT = "WRIFILE" : Gosub ENTREE From EXEFNC
+If GPE : GOK=0 : Return : Endif
+# Set cabecera
+#For [F:ZDVW] Where CODVUE=[F:ZDFS]ZVISTA
+#  ZCABTXT+=[F:ZDVW]TEXTE+";"
+#Next
+#Wrseq left$(ZCABTXT, len(ZCABTXT)-1)   Using [ZFIL] # Quitamos el último ;
+#Wrseq chr$(13)+chr$(10)                Using [ZFIL]
+
+Openo Using [ZFIL] # Cerrar fichero
+
+Call ECR_TRACE("Se han exportado un total de"-num$(ZNEXP)-"registros",0) From GESECRAN
+
+# Si es FTP, subir a servidor
+If [F:ZDAH]ZMODTXT=2
+  Call GET_PUT_FICHEROS_FTP(1,filpath("", "", "")+"\TMP\",ZFOLDER+"\",[F:ZDAH]ZHOST,[F:ZDAH]ZUIDCON,[F:ZDAH]ZPWDCON,[F:ZDAH]ZHOST+[F:ZDAH]ZFLDFTP,ZEXT) From ZINTLIB
+Endif
+Return
+
+
+#######################################################################################
+Subprog VACIAR_REJILLA
+Raz   [M:ZIM1]NBLIG
+Effzo [M:ZIM1]5
+End
+
+#######################################################################################
+$BUSCAR_VALIDAR
+If !OK   Return   Endif
+Local Integer WERR
+
+If !OK  End  Endif
+For F=0 To [M:ZIM0]NBLIG-1
+  If [M:ZIM0]ZSEL(F)=2 and instr(1,MSG,num$([M:ZIM0]ZIDSMS(F)))<1
+    If MSG<>""  MSG+="," Endif
+    MSG+=num$([M:ZIM0]ZIDSMS(F))
+  Endif
+Next
+If MSG=""
+  Call MESSAGE ("Debe seleccionar un tipo de mensaje")  From GESECRAN
+  OK=0
+Endif
+Return
+
+#######################################################################################
+$BUSCAR_SQL
+If !OK   Return   Endif
+Gosub DEF_VAR_SQL From ZCOMUN
+
+If find([F:ZDS]ZTIPOSMS,1,2,3) Then
+  ZFIESPE=", MFGNUM_0 "
+Else
+  ZFIESPE=",ZNUM_0 "
+Endif
+
+Raz TXT
+F=-1
+F+=1 : TXT(F)="SELECT ZIDEXT_0,CONVERT(CHAR,CREDATTIM_0,103) AS FECSMS,CONVERT(CHAR,CREDATTIM_0,8) AS HORSMS, CONVERT(CHAR,UPDDATTIM_0,22) AS FECHORPRO,ZSTA_0,ZTRAZA_0,"
+F+=1 : TXT(F)="ZNUM_0,ZMSG_0"+ZFIESPE+",ZFILEXML_0 "
+F+=1 : TXT(F)="FROM " + [F:ZDS]ZATBCAB + " "
+F+=1 : TXT(F)="WHERE ZSTA_0="+num$([M:ZIM0]ZESTADO)
+If [M:ZIM0]ZFECGRAINI<>[0/0/0] F+=1:TXT(F)="and CREDATTIM_0>=convert(datetime,'"+format$("D:MM[-]DD[-]YYYY",[M:ZIM0]ZFECGRAINI)+"',111) "    Endif
+If [M:ZIM0]ZFECPROINI<>[0/0/0] F+=1:TXT(F)="and UPDDATTIM_0>=convert(datetime,'"+format$("D:MM[-]DD[-]YYYY",[M:ZIM0]ZFECPROINI)+"',111) "    Endif
+If [M:ZIM0]ZFECGRAFIN<>[0/0/0] F+=1:TXT(F)="and CREDATTIM_0< dateadd(day,1,(convert(datetime,'"+format$("D:MM[-]DD[-]YYYY",[M:ZIM0]ZFECGRAFIN)+"',111))) "    Endif
+If [M:ZIM0]ZFECPROFIN<>[0/0/0] F+=1:TXT(F)="and UPDDATTIM_0< dateadd(day,1,(convert(datetime,'"+format$("D:MM[-]DD[-]YYYY",[M:ZIM0]ZFECPROFIN)+"',111))) "    Endif
+F+=1:TXT(F)="ORDER BY CREDATTIM_0 DESC"
+Return
+
+#######################################################################################
+$BUSCAR_MOSTRAR
+If !OK   Return   Endif
+
+Onerrgo SRV_CHK
+For (Char ZID(GLONVCR), Char ZFECSMS(20), Char ZHORSMS(20), Char ZFECHORPRO(25), Integer ZZSTA,Char ZZTRAZA(GLONTRA),Char ZZNUM(GLONVCR),Char ZZMSG(250),Char ZMFGNUM(GLONVCR),Char ZZFILEXML(250)) From
+& BD Sql TXT As [MYT]
+  If WERR=1 Then Break Endif
+  If ZFILA+1>=TF
+    Call ERREUR ("FALTAN DATOS !!!\Se ha alcanzado el máximo de"-num$(TF)-"filas en rejilla Resultdo\Pida que se lo aumenten") From GESECRAN
+    OK=0 : Break
+  Else
+    Raz ZDESCRIPCION
+    If find([F:ZDS]ZTIPOSMS,1,2,3) Then
+      If [F:ZDS]ZTIPOSMS=3 and [MYT]ZMFGNUM="" Then
+        ZDESCRIPCION="Sin OF asociada:"-func ZINTLIB.GET_DESC_SEGUIMIENTO([MYT]ZID)
+      Else
+        ZDESCRIPCION="Nº órden de fabricación:"-[MYT]ZMFGNUM
+      Endif
+    Elsif [F:ZDS]ZTIPOSMS=16 Then
+      ZDESCRIPCION="Nº pedido de compra:"-func GET_DESCRIPCION([F:ZDS]ZTIPOSMS,[MYT]ZID,[F:ZDS]ZATBCAB)
+    Elsif [F:ZDS]ZTIPOSMS=17 Then
+      ZDESCRIPCION="Nº OF:"-func GET_DESCRIPCION([F:ZDS]ZTIPOSMS,[MYT]ZID,[F:ZDS]ZATBCAB)
+    Else
+      If vireblc([MYT]ZMFGNUM,2)<>"" Then
+        ZDESCRIPCION=mess([F:ZDS]ZTIPOSMS,6902,1)-[MYT]ZMFGNUM
+      Endif
+    Endif
+
+    GPOINT = "DESC_MONITOR" : Gosub ENTREE From EXEFNC
+
+    [M:ZIM1]ZIDEXT(ZFILA)     = [MYT]ZID
+    [M:ZIM1]ZIDSMS(ZFILA)     = ZIDSMS
+    [M:ZIM1]ZFECSMS(ZFILA)    = [MYT]ZFECSMS
+    [M:ZIM1]ZHORSMS(ZFILA)    = [MYT]ZHORSMS
+    [M:ZIM1]ZFECPRO(ZFILA)    = [MYT]ZFECHORPRO
+    [M:ZIM1]ZESTADO(ZFILA)    = [MYT]ZZSTA
+    [M:ZIM1]TRACE(ZFILA)      = [MYT]ZZTRAZA
+    [M:ZIM1]ZDESCSMS (ZFILA)  = ZDESCRIPCION
+    [M:ZIM1]ZNUM(ZFILA)       = [MYT]ZZNUM
+    [M:ZIM1]ZDESCERROR(ZFILA) = [MYT]ZZMSG
+    [M:ZIM1]ZFILEXML(ZFILA)   = [MYT]ZZFILEXML
+    ZFILA+=1
+  Endif
+Next
+Onerrgo
+If OK<>0 or ZFILA>=0 Then
+  [M:ZIM1]NBLIG=ZFILA
+Endif
+Affzo [M:ZIM1]5
+If [M:ZIM1]NBLIG<1
+  Call MESSAGE("No se han encontrado mensajes para el ID"-ZIDSMS+". Revise filtros") From GESECRAN
+Endif
+Return
+
+#######################################################################################
+Subprog PROCESAR
+Return
+
+#######################################################################################
+$SRV_CHK
+GMESSAGE="MES-Error"-num$(errn)-"raised on line"-num$(errl)-"in script"-errp-"Message:"-errmes$(errn)-"Additional details:"-errm
+Call ERREUR(GMESSAGE) From GESECRAN
+Raz GMESSAGE
+WERR=1
+Resume
+End
+
+#######################################################################################
+$BOTON_COMUN
+If [M:ZIM1]ZESTADO(nolign-1)<>3    Return  Endif
+Call OUINON("¿ Está seguro de"-MSG-"este mensaje ?",YN) From GESECRAN
+If YN=1  Return  Endif
+Onerrgo SRV_CHK
+Gosub DEF_VAR_CFGSMS From ZINTLIB
+#Call GET_INFO_MENSAJE([M:ZIM0]ZAPLICACION, [M:ZIM1]ZIDSMS(nolign-1), ZTABLA1, ZTABLA2, ZTIPOSMS, ZMODELO, ZAOB) From ZINTLIB
+Read [F:ZDFS]ZDSM0=[M:ZIM1]ZIDSMS(nolign-1)
+If fstat<>0 Then Return Endif
+
+Call UPD_EST_SMS([F:ZDFS]ZATBCAB,[M:ZIM1]ZIDEXT(nolign-1),STA,"","","") From ZINTLIB
+Call CAMBIAR_COLOR_FILA(STA,COL,nolign-1)
+Onerrgo
+Return
+
+#######################################################################################
+Subprog CAMBIAR_COLOR_FILA(STA,COL,ZFILA)
+Value Integer STA
+Value Char COL
+Value Integer ZFILA
+
+[M:ZIM1]ZESTADO(ZFILA)=STA
+Affzo [M:ZIM1]ZESTADO(ZFILA)
+Chgstl [M:ZIM1]NBLIG(ZFILA) With COL
+End
+
+
+#**
+#* Comprueba y crea los directorios establecidos para la aplicación
+#* Si el tipo es FTP, se tendrá en cuenta la subcarpeta del mensaje
+#*
+#* @param PTIP > Tipo de integración (1-Telecarga, 2-FTP)
+#*!
+Subprog CHECK_DIR(PTIP)
+Value Integer PTIP
+Local Char    ZFOLDER(250), ZCHKFLD(250)
+Local Integer ZEXISTE, ZNDIR
+ZNDIR = 3
+If PTIP=2 : ZNDIR = 4 : Endif
+For I=1 To ZNDIR
+  Case I
+    When 1 : ZFOLDER = "[F:ZDAH]ZFLDLOCAL"
+    When 2 : ZFOLDER = "[F:ZDAH]ZFLDLOCAL+[F:ZDAP]ZSUBFLD"
+    When 3 : ZFOLDER = "[F:ZDAH]ZFLDLOCAL+[F:ZDAH]ZFLDERR"
+    When 4 : ZFOLDER = "[F:ZDAH]ZFLDLOCAL+[F:ZDAH]ZFLDPRO"
+  Endcase
+
+  Call EXISTE(evalue(ZFOLDER),ZEXISTE) From ORDSYS
+  If ZEXISTE<>2 Then
+    ZCHKFLD = evalue(ZFOLDER)
+    Call CREAR_DIR(ZCHKFLD) From ZCOMUN
+    If ZCHKFLD=""
+      GMESSAGE = "Error al crear el directorio"-evalue(ZFOLDER)
+    Endif
+  Endif
+Next
+End
+
+#######################################################################################
+#**
+#* Obtiene una descripción específica
+#*
+#* @param PZTIPO  > Tipo de mensaje
+#* @param PZIDEXT > Id del mensaje
+#* @param PZTABLA > Tabla específica
+#*!
+Funprog GET_DESCRIPCION(PZTIPO,PZIDEXT,PZTABLA)
+Value Integer PZTIPO
+Value Char    PZIDEXT, PZTABLA
+Local Char    ZRET(250)
+
+Gosub DEF_VAR_SQL From ZCOMUN
+
+If PZTIPO=16 Then
+  F+=1 : TXT(F)="SELECT POHNUM_0 FROM"-PZTABLA-"WHERE ZIDEXT_0='"+PZIDEXT+"'"
+Elsif PZTIPO=17 Then
+  F+=1 : TXT(F)="SELECT MFGNUM_0 FROM"-PZTABLA-"WHERE ZIDEXT_0='"+PZIDEXT+"'"
+Endif
+For (Char ZINFO(250)) From BD Sql TXT As [ZIN]
+  ZRET = [ZIN]ZINFO
+Next
+End ZRET
+
+#######################################################################################
+#      A C C I O N E S       C A M P O
+#######################################################################################
+Subprog AM_ZAPLICACION(VALEUR)
+Variable Char    VALEUR()
+Raz [M:ZIM0]NBLIG
+Effzo [M:ZIM0]10
+Call LLENAR_REJ_MENSAJES(VALEUR,[M:ZIM0]ZSENTIDO,"ZIM0") From ZINTLIB
+Affzo [M:ZIM0]
+End
+
+#######################################################################################
+Subprog AM_ZSENTIDO(VALEUR)
+Variable Integer    VALEUR()
+Raz [M:ZIM0]NBLIG
+Effzo [M:ZIM0]10
+Call LLENAR_REJ_MENSAJES([M:ZIM0]ZAPLICACION,VALEUR,"ZIM0") From ZINTLIB
+Affzo [M:ZIM0]
+End
+
+######################################################################################
+Subprog AM_ZESTADO(VALEUR)
+Variable Integer VALEUR
+Call COLOR_ESTADO(VALEUR)
+Actzo [M:ZIM0]ZFECGRAINI,ZFECPROINI
+If VALEUR=1 Then
+  Raz [M:ZIM0]ZFECGRAINI,ZFECPROINI
+  Diszo [M:ZIM0]ZFECGRAINI,ZFECPROINI
+Endif
+End
+
+######################################################################################
+Subprog IB_NBLIG
+GBOUT1="Descartar"
+GBOUT2="Reprocesar"
+GBOUT3="Ver traza"
+GBOUT4="Ir a documento X3"
+
+# No mostramos los botones de DESCARTAR y REPROCESAR cuando el estado filtrado sea distinto a erróneo
+If [M:ZIM0]ZESTADO<>3 Then
+  Raz GBOUT1
+  Raz GBOUT2
+Endif
+
+# Si no hay fichero de traza no mostramos el botón VER TRAZA
+If [M:ZIM1]TRACE(nolign-1) = "" : Raz GBOUT3  : Endif
+
+# No mostramos el botón IR A DOCUMENTO X3 cuando el nº de documento no está guardado
+If [M:ZIM1]ZNUM(nolign-1) = ""   : Raz GBOUT4 : Endif
+
+End
+
+######################################################################################
+Subprog B1_NBLIG
+Local Integer OK  :  OK=1
+Local Integer YN  :  YN=1
+Local Integer STA :  STA=4
+Local Char    COL :  COL="BACKRED"
+Local Char    MSG :  MSG="descartar"
+Gosub BOTON_COMUN
+End
+
+######################################################################################
+Subprog B2_NBLIG
+Local Integer OK  :  OK=1
+Local Integer YN  :  YN=1
+Local Integer STA :  STA=1
+Local Char    COL :  COL="BACKYELLOW"
+Local Char    MSG :  MSG="reprocesar"
+Gosub BOTON_COMUN
+End
+
+######################################################################################
+Subprog B3_NBLIG
+If instr(1,[M:ZIM1]TRACE(nolign-1),"RQT")=0 Then
+  Call LECFIC(filpath("TRA","",""),[M:ZIM1]TRACE(nolign-1),"tra") From LECFIC
+Else
+  If instr(1,[M:ZIM1]TRACE(nolign-1),".tra")=0 Then
+    Call LECFIC("",[M:ZIM1]TRACE(nolign-1)+".tra","") From LECFIC
+  Else
+    Call LECFIC("",[M:ZIM1]TRACE(nolign-1),"") From LECFIC
+  Endif
+Endif
+End
+
+######################################################################################
+Subprog B4_NBLIG
+Gosub DEF_VAR_CFGSMS From ZINTLIB
+Read [F:ZDFS]ZDSM0=[M:ZIM1]ZIDSMS(nolign-1)
+If fstat<>0 Then Return Endif
+#Call GET_INFO_MENSAJE([M:ZIM0]ZAPLICACION, [M:ZIM1]ZIDSMS(nolign-1), ZTABLA1, ZTABLA2, ZTIPOSMS, ZMODELO, ZAOB) From ZINTLIB
+If [F:ZDFS]ZOBJETO="" Then End Endif
+
+# Abrimos la transacción
+GBIDC1 = [M:ZIM1]ZNUM(nolign-1)
+Call OBJET ([F:ZDFS]ZOBJETO, GBIDC1, GBIDC2) From GOBJET
+End
+
+
+######################################################################################
+
+#$VOLCADO_BD
+#If !OK   Return   Endif
+#Local Clbfile ZCAMPOSH, ZCAMPOSL
+#Gosub DEF_VAR_SQL From ZCOMUN
+#For NSMS=0 To [M:ZIM0]NBLIG-1
+#  If [M:ZIM0]ZSEL(NSMS)=2
+#    Gosub DEF_VAR_CFGSMS From ZINTLIB
+#    Call GET_INFO_MENSAJE([M:ZIM0]ZAPLICACION, ZIDSMS, ZTABLA1, ZTABLA2, ZTIPOSMS, ZMODELO, ZAOB) From ZINTLIB
+#    Gosub VOLCADO_BD_SQL
+#  Endif
+#Next
+#Return
+#
+#$VOLCADO_BD_SQL
+#Raz TXT, ZCAMPOINS1, ZCAMPOINS2, ZCAMPOSEL : F=-1
+#Call GET_CAMPOS_SQL(1, ZTABLAGEN, ZTABLA1, ZCAMPOSINS1) : Call GET_CAMPOS_SQL(2, ZTABLAGEN, ZTABLA1, ZCAMPOSINS2)
+#Call GET_FUNCIONES_SQL(ZCAMPOINS1, ZCAMPOINS2, ZCAMPOSEL)
+#F+=1 : TXT(F)="INSERT INTO " + ZTABLA1 + " ("+ZCAMPOSINS1+" "+ZCAMPOSINS2+" ZSTA_0) "
+#F+=1 : TXT(F)="SELECT " + ZCAMPOSEL + " "
+#F+=1 : TXT(F)="WHERE "
+#Return
+#
+##**
+##* Devuelve los campos de una tabla wn SQL separados por comas
+##*
+##* @param PTIP    > 1-INTERSECT, 2-EXCEPT
+##* @param PTAB1
+##* @param PTAB2
+##* @param PCAMPOS
+##*!
+#Subprog GET_CAMPOS_SQL(PTIP, PTAB1, PTAB2, PCAMPOS)
+#Value Integer    PTIP
+#Value Char       PTAB1, PTAB2
+#Variable Clbfile PCAMPOS
+#Gosub DEF_VAR_SQL From ZCOMUN
+#Raz TXT : F=-1
+#
+#F+=1 : TXT(F)="SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '"+PTABGEN+"'"
+#If PTIP = 1
+#  F+=1 : TXT(F)=" INTERSECT "
+#Else
+#  F+=1 : TXT(F)=" EXCEPT "
+#Endif
+#F+=1 : TXT(F)="SELECT COLUMN_NAME From INFORMATION_SCHEMA.Columns Where TABLE_NAME = '"+PTABINTH+"'"
+#
+#Onerrgo SRV_CHK
+#For (Char ZCOLNAME) From BD Sql TXT As [COL]
+#  If WERR=1 Then Break Endif
+#  If !find([COL]SZCOLNAME, "UPDTICK_0", "ROWID", "ZSTA_0")
+#    If PTIP = 3
+#      PCAMPOSH += "'', "
+#    Else
+#      PCAMPOSH += [COL]ZCOLNAME + ", "
+#    Endif
+#  Endif
+#Next
+#End
+#
+#Subprog GET_FUNCIONES_SQL(PINSERTGEN, PINSERTSPE, PSELECT)
+#Value Char    PINSERTGEN, PINSERTSPE
+#Variable Char PSELECT
+#PSELECT = func ZCOMUN.REPLACE_T(PINSERT, "AUUID_0", "NEWID()")
+#PSELECT = func ZCOMUN.REPLACE_T(PINSERT, "CREDATTIM_0", "GETDATE()")
+#PSELECT = func ZCOMUN.REPLACE_T(PINSERT, "UPDDATTIM_0", "GETDATE()")
+#PSELECT = func ZCOMUN.REPLACE_T(PINSERT, "CREUSR_0", "'"+GUSER+"'")
+#PSELECT = func ZCOMUN.REPLACE_T(PINSERT, "UPDUSR_0", "'"+GUSER+"'")
+#PSELECT = func ZCOMUN.REPLACE_T(PINSERT, "ZSTA_0", "''")
+#End
